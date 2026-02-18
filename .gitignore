@@ -1,0 +1,44 @@
+Blank project/Blank project.rpp
+Blank project/Blank project.rpp-UNDO
+build/reaper_cleaner/Analysis-00.toc
+build/reaper_cleaner/base_library.zip
+build/reaper_cleaner/EXE-00.toc
+build/reaper_cleaner/PKG-00.toc
+build/reaper_cleaner/PYZ-00.pyz
+build/reaper_cleaner/PYZ-00.toc
+build/reaper_cleaner/reaper_cleaner.pkg
+build/reaper_cleaner/warn-reaper_cleaner.txt
+build/reaper_cleaner/xref-reaper_cleaner.html
+build/reaper_cleaner/localpycs/pyimod01_archive.pyc
+build/reaper_cleaner/localpycs/pyimod02_importers.pyc
+build/reaper_cleaner/localpycs/pyimod03_ctypes.pyc
+build/reaper_cleaner/localpycs/struct.pyc
+CleanUpSampleProjects/CleanUpSampleProject1/CleanUpSampleProject1.rpp
+CleanUpSampleProjects/CleanUpSampleProject1/CleanUpSampleProject1.rpp-bak
+CleanUpSampleProjects/CleanUpSampleProject1/Audio Files/guitar.wav
+CleanUpSampleProjects/CleanUpSampleProject1/Audio Files/P1_Unused1.wav
+CleanUpSampleProjects/CleanUpSampleProject1/Audio Files/P1_Used1.wav
+CleanUpSampleProjects/CleanUpSampleProject1/Audio Files/P1_Used2.wav
+CleanUpSampleProjects/CleanUpSampleProject1/Audio Files/Shared_Kick.wav
+CleanUpSampleProjects/CleanUpSampleProject1/Audio Files/peaks/guitar.wav.reapeaks
+CleanUpSampleProjects/CleanUpSampleProject1/Audio Files/peaks/P1_Used1.wav.reapeaks
+CleanUpSampleProjects/CleanUpSampleProject1/Audio Files/peaks/P1_Used2.wav.reapeaks
+CleanUpSampleProjects/CleanUpSampleProject1/Audio Files/peaks/Shared_Kick.wav.reapeaks
+CleanUpSampleProjects/CleanUpSampleProject1/Backups/CleanUpSampleProject1-2025-05-05_224853.rpp-bak
+CleanUpSampleProjects/CleanUpSampleProject1/Backups/CleanUpSampleProject1-2026-02-17_220359.rpp-bak
+CleanUpSampleProjects/CleanUpSampleProject2/CleanUpSampleProject2.rpp
+CleanUpSampleProjects/CleanUpSampleProject2/CleanUpSampleProject2.rpp-bak
+CleanUpSampleProjects/CleanUpSampleProject2/Audio Media Files/Guitar.wav
+CleanUpSampleProjects/CleanUpSampleProject2/Audio Media Files/P2_Unused1.wav
+CleanUpSampleProjects/CleanUpSampleProject2/Audio Media Files/P2_Unused2.wav
+CleanUpSampleProjects/CleanUpSampleProject2/Audio Media Files/P2_Used1.wav
+CleanUpSampleProjects/CleanUpSampleProject2/Audio Media Files/P2_Used2.wav
+CleanUpSampleProjects/CleanUpSampleProject2/Audio Media Files/Shared_Kick.wav
+CleanUpSampleProjects/CleanUpSampleProject2/Audio Media Files/peaks/P2_Used1.wav.reapeaks
+CleanUpSampleProjects/CleanUpSampleProject2/Audio Media Files/peaks/P2_Used2.wav.reapeaks
+CleanUpSampleProjects/CleanUpSampleProject2/Audio Media Files/peaks/Shared_Kick.wav.reapeaks
+CleanUpSampleProjects/CleanUpSampleProject2/Backups/CleanUpSampleProject2-2025-02-13_234733.rpp-bak
+dist/reaper_cleaner
+IA prompt.txt
+Reaper Project Clean up.code-workspace
+reaper_cleaner.spec

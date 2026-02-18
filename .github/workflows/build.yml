@@ -1,0 +1,57 @@
+name: Build Reaper Cleaner
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+
+jobs:
+  build:
+    name: Build on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.12' 
+
+    - name: Install Dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pyinstaller
+
+    # --- WINDOWS BUILD ---
+    - name: Build Windows
+      if: matrix.os == 'windows-latest'
+      run: |
+        pyinstaller --noconsole --onefile --clean --collect-all customtkinter --name ReaperCleaner_Win reaper_cleaner.py
+
+    # --- LINUX BUILD ---
+    - name: Build Linux
+      if: matrix.os == 'ubuntu-latest'
+      run: |
+        # We need to explicitly find the customtkinter path for Linux
+        CTK_PATH=$(python -c "import customtkinter; print(customtkinter.__path__[0])")
+        pyinstaller --noconsole --onefile --clean --add-data "$CTK_PATH:customtkinter" --name ReaperCleaner_Linux reaper_cleaner.py
+
+    # --- MACOS BUILD ---
+    - name: Build macOS
+      if: matrix.os == 'macos-latest'
+      run: |
+        CTK_PATH=$(python -c "import customtkinter; print(customtkinter.__path__[0])")
+        pyinstaller --noconsole --onefile --clean --add-data "$CTK_PATH:customtkinter" --name ReaperCleaner_Mac reaper_cleaner.py
+
+    # --- UPLOAD ARTIFACTS ---
+    - name: Upload Build Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: ReaperCleaner_${{ matrix.os }}
+        path: dist/
