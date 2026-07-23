@@ -205,6 +205,42 @@ def test_find_unused_and_ambiguous_files_skips_archive_folder(tmp_path):
     assert ambiguous == []
 
 
+def test_find_unused_and_ambiguous_files_walks_shared_folder_once(tmp_path, monkeypatch):
+    # A single real project commonly has one .rpp plus many REAPER auto-backup
+    # .rpp-bak files in the same folder - if all of them are checked, the
+    # folder must be walked once, not once per checked project entry.
+    project_dir = tmp_path / "Proj1"
+    project_dir.mkdir()
+    make_audio(project_dir / "unused.wav")
+
+    rpp_path = project_dir / "Proj1.rpp"
+    make_rpp(rpp_path, [])
+    backup1 = project_dir / "Proj1-2024-01-01.rpp-bak"
+    backup1.write_text("dummy")
+    backup2 = project_dir / "Proj1-2024-01-02.rpp-bak"
+    backup2.write_text("dummy")
+
+    walked_paths = []
+    original_walk = os.walk
+
+    def counting_walk(path, *args, **kwargs):
+        walked_paths.append(path)
+        return original_walk(path, *args, **kwargs)
+
+    monkeypatch.setattr(reaper_core.os, "walk", counting_walk)
+
+    project_entries = [
+        (str(rpp_path), "Proj1.rpp"),
+        (str(backup1), "Proj1-2024-01-01.rpp-bak"),
+        (str(backup2), "Proj1-2024-01-02.rpp-bak"),
+    ]
+    unused, ambiguous = reaper_core.find_unused_and_ambiguous_files(project_entries, set(), set())
+
+    assert walked_paths.count(str(project_dir)) == 1
+    assert {u["name"] for u in unused} == {"unused.wav"}
+    assert ambiguous == []
+
+
 # --- archive_files / undo_last_archive ---
 
 def test_archive_files_moves_file_and_writes_log(tmp_path):

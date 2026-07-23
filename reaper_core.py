@@ -243,7 +243,7 @@ def find_unused_and_ambiguous_files(project_entries, specific_used_paths, fallba
     audio_extensions: iterable of extensions (any casing, with leading dot,
       list or tuple) to treat as media - user-configurable via settings.
     cancel_check: optional zero-arg callable; if it returns True, raises
-      ScanCancelled (checked once per project and once per directory walked).
+      ScanCancelled (checked once per unique folder and once per directory walked).
 
     Returns (unused, ambiguous), each a deduplicated list of dicts
     (path, name, size_mb, origin):
@@ -256,10 +256,20 @@ def find_unused_and_ambiguous_files(project_entries, specific_used_paths, fallba
     audio_extensions = tuple(ext.lower() for ext in audio_extensions)
     unused = {}
     ambiguous = {}
+
+    # Multiple checked projects frequently share the same folder - REAPER
+    # keeps every auto-backup as a separate .rpp-bak in the project's own
+    # folder (or a Backups/ subfolder), so a single real project can produce
+    # dozens or hundreds of project_entries pointing at the same directory.
+    # Walk each unique folder once instead of once per entry, otherwise
+    # checking N backups from the same folder re-walks that folder N times.
+    project_dirs = {}
     for rpp_path, origin_name in project_entries:
+        project_dirs.setdefault(os.path.dirname(rpp_path), origin_name)
+
+    for project_dir, origin_name in project_dirs.items():
         if cancel_check and cancel_check():
             raise ScanCancelled()
-        project_dir = os.path.dirname(rpp_path)
         for root, dirs, files in os.walk(project_dir):
             if cancel_check and cancel_check():
                 raise ScanCancelled()

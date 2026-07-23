@@ -1,6 +1,7 @@
 import datetime
 import os
 import threading
+import tkinter as tk
 
 import customtkinter as ctk
 from tkinter import filedialog, messagebox
@@ -40,6 +41,11 @@ class App(ctk.CTk):
         self.unused_files_data = []  # List of dicts
         self.ambiguous_files_data = []  # List of dicts (excluded by the safety net)
         self._cancel_event = threading.Event()
+        # Bumped on every render_projects()/render_unused() call so a stale,
+        # still-scheduled chunk from a previous render (e.g. superseded by a
+        # fast filter keystroke) can recognize it's obsolete and stop.
+        self._project_render_token = 0
+        self._unused_render_token = 0
 
         # --- UI LAYOUT ---
 
@@ -248,23 +254,56 @@ class App(ctk.CTk):
 
         self._run_in_background(task, on_success, on_cancelled)
 
+    def _row_bg(self, scrollable_frame):
+        """Background color matching a CTkScrollableFrame's own fill, so
+        plain-tkinter list rows (see _render_project_batch/_render_unused_batch)
+        blend in instead of showing a mismatched default gray."""
+        color = scrollable_frame.cget("fg_color")
+        if isinstance(color, (list, tuple)):
+            return color[1] if ctk.get_appearance_mode() == "Dark" else color[0]
+        return color
+
     def render_projects(self):
         # Clear UI
         for widget in self.project_scroll.winfo_children(): widget.destroy()
 
         query = self.project_filter_var.get().strip().lower()
-        # Re-draw UI
-        for proj in self.all_projects_data:
-            if query and query not in proj['name'].lower():
-                continue
-            row = ctk.CTkFrame(self.project_scroll, fg_color="transparent")
+        items = [p for p in self.all_projects_data if not query or query in p['name'].lower()]
+
+        self._project_render_token += 1
+        self._render_project_batch(items, 0, self._project_render_token)
+
+    def _render_project_batch(self, items, index, token, batch_size=60):
+        # A newer render_projects() call has since cleared the panel and
+        # started its own sequence - creating widgets from this stale batch
+        # would silently re-populate a list the user already moved on from.
+        # Rendering in small batches (instead of all ~1000+ rows in one
+        # synchronous pass) keeps the UI responsive on large project folders.
+        # Rows use plain tkinter widgets rather than customtkinter's (each
+        # customtkinter widget is a canvas-based construct ~10x more
+        # expensive to build - at 1000 rows that alone is a multi-second
+        # stall, which is what most of a reported "freeze" turned out to be).
+        if token != self._project_render_token:
+            return
+
+        row_bg = self._row_bg(self.project_scroll)
+        end = min(index + batch_size, len(items))
+        for proj in items[index:end]:
+            row = tk.Frame(self.project_scroll, bg=row_bg)
             row.pack(fill="x", pady=2)
 
-            cb = ctk.CTkCheckBox(row, text=proj['name'], variable=proj['selected_var'], width=300)
+            cb = tk.Checkbutton(row, text=proj['name'], variable=proj['selected_var'],
+                                bg=row_bg, fg="white", selectcolor="#333333",
+                                activebackground=row_bg, activeforeground="white",
+                                highlightthickness=0, bd=0, anchor="w", font=("Arial", 12))
             cb.pack(side="left")
 
-            lbl = ctk.CTkLabel(row, text=f"{proj['size_mb']:.2f} MB", text_color="gray", width=80, anchor="e")
-            lbl.pack(side="right")
+            lbl = tk.Label(row, text=f"{proj['size_mb']:.2f} MB", fg="gray", bg=row_bg,
+                          anchor="e", font=("Arial", 11))
+            lbl.pack(side="right", padx=(0, 10))
+
+        if end < len(items):
+            self.after(1, lambda: self._render_project_batch(items, end, token, batch_size))
 
     def set_all_projects_selected(self, selected):
         query = self.project_filter_var.get().strip().lower()
@@ -297,9 +336,7 @@ class App(ctk.CTk):
         def on_success(result):
             unused, ambiguous = result
             self._stop_progress()
-            self.unused_files_data = [
-                {**item, "selected_var": ctk.IntVar(value=1)} for item in unused
-            ]
+            self.unused_files_data = [self._make_unused_entry(item) for item in unused]
             self.ambiguous_files_data = ambiguous
             self.ambiguous_btn.configure(text=self._t("ambiguous_button", n=len(ambiguous)))
             self._update_ambiguous_banner()
@@ -319,25 +356,51 @@ class App(ctk.CTk):
 
         self._run_in_background(task, on_success, on_cancelled)
 
+    def _make_unused_entry(self, item):
+        # The trace is attached once here, not in render_unused()'s per-row
+        # loop - render_unused() re-runs on every filter keystroke while the
+        # underlying IntVar objects persist, so attaching it there would
+        # silently stack a new duplicate callback on every keystroke.
+        var = ctk.IntVar(value=1)
+        var.trace_add("write", lambda *_: self._update_selection_summary())
+        return {**item, "selected_var": var}
+
     def render_unused(self):
         for widget in self.files_scroll.winfo_children(): widget.destroy()
 
         query = self.unused_filter_var.get().strip().lower()
-        for file in self.unused_files_data:
-            if query and query not in file['name'].lower():
-                continue
-            row = ctk.CTkFrame(self.files_scroll, fg_color="transparent")
+        items = [f for f in self.unused_files_data if not query or query in f['name'].lower()]
+
+        # The summary reflects the full underlying selection, not just what's
+        # rendered so far, so it's correct immediately even while rows stream in.
+        self._update_selection_summary()
+
+        self._unused_render_token += 1
+        self._render_unused_batch(items, 0, self._unused_render_token)
+
+    def _render_unused_batch(self, items, index, token, batch_size=60):
+        if token != self._unused_render_token:
+            return  # superseded by a newer render_unused() call
+
+        row_bg = self._row_bg(self.files_scroll)
+        end = min(index + batch_size, len(items))
+        for file in items[index:end]:
+            row = tk.Frame(self.files_scroll, bg=row_bg)
             row.pack(fill="x", pady=2)
 
-            cb = ctk.CTkCheckBox(row, text=file['name'], variable=file['selected_var'], text_color="#FF9999")
+            cb = tk.Checkbutton(row, text=file['name'], variable=file['selected_var'],
+                                bg=row_bg, fg="#FF9999", selectcolor="#333333",
+                                activebackground=row_bg, activeforeground="#FF9999",
+                                highlightthickness=0, bd=0, anchor="w", font=("Arial", 12))
             cb.pack(side="left")
-            file['selected_var'].trace_add("write", lambda *_: self._update_selection_summary())
 
             # Show Origin Project
-            meta = ctk.CTkLabel(row, text=f"[{file['origin']}]  {file['size_mb']:.1f}MB", text_color="gray", width=150, anchor="e")
-            meta.pack(side="right")
+            meta = tk.Label(row, text=f"[{file['origin']}]  {file['size_mb']:.1f}MB", fg="gray", bg=row_bg,
+                           anchor="e", font=("Arial", 11))
+            meta.pack(side="right", padx=(0, 10))
 
-        self._update_selection_summary()
+        if end < len(items):
+            self.after(1, lambda: self._render_unused_batch(items, end, token, batch_size))
 
     def set_all_unused_selected(self, selected):
         query = self.unused_filter_var.get().strip().lower()
@@ -378,11 +441,13 @@ class App(ctk.CTk):
         scroll = ctk.CTkScrollableFrame(win)
         scroll.pack(fill="both", expand=True, padx=15, pady=(0, 15))
 
+        row_bg = self._row_bg(scroll)
         for file in self.ambiguous_files_data:
-            row = ctk.CTkFrame(scroll, fg_color="transparent")
+            row = tk.Frame(scroll, bg=row_bg)
             row.pack(fill="x", pady=2)
-            ctk.CTkLabel(row, text=file['name'], anchor="w").pack(side="left")
-            ctk.CTkLabel(row, text=f"[{file['origin']}]  {file['size_mb']:.1f}MB", text_color="gray", width=150, anchor="e").pack(side="right")
+            tk.Label(row, text=file['name'], fg="white", bg=row_bg, anchor="w", font=("Arial", 12)).pack(side="left")
+            tk.Label(row, text=f"[{file['origin']}]  {file['size_mb']:.1f}MB", fg="gray", bg=row_bg,
+                    anchor="e", font=("Arial", 11)).pack(side="right", padx=(0, 10))
 
     # --- LOGIC 3: ARCHIVER ---
     def archive_files_logic(self):
