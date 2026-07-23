@@ -8,11 +8,63 @@ import os
 import re
 import shutil
 import json
+import sys
 import datetime
 
 AUDIO_EXTENSIONS = ('.wav', '.aif', '.aiff', '.mp3', '.ogg', '.flac', '.mid')
 ARCHIVE_FOLDER_NAME = "_Reaper_Cleanup_Archive"
 LOG_FILE_NAME = "archive_log.json"
+SETTINGS_FILE_NAME = "settings.json"
+
+DEFAULT_SETTINGS = {
+    "audio_extensions": list(AUDIO_EXTENSIONS),
+    # User-declared media search folders, equivalent to REAPER's own
+    # "media search path" (Preferences > Media): additional locations to
+    # look in when a FILE reference can't be resolved relative to the
+    # project or as an absolute path.
+    "extra_search_folders": [],
+    "language": "en",
+}
+
+
+def _config_dir():
+    """Per-OS user config directory, so settings survive PyInstaller onefile
+    runs (whose own install location is a temp folder wiped after exit)."""
+    if os.name == 'nt':
+        base = os.environ.get('APPDATA', os.path.expanduser('~'))
+    elif sys.platform == 'darwin':
+        base = os.path.expanduser('~/Library/Application Support')
+    else:
+        base = os.environ.get('XDG_CONFIG_HOME', os.path.expanduser('~/.config'))
+    return os.path.join(base, 'ReaperProjectCleaner')
+
+
+def _settings_path():
+    return os.path.join(_config_dir(), SETTINGS_FILE_NAME)
+
+
+def load_settings(path=None):
+    """Load user settings, falling back to defaults for anything missing/invalid."""
+    path = path or _settings_path()
+    settings = dict(DEFAULT_SETTINGS)
+    if not os.path.exists(path):
+        return settings
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return settings
+    for key in DEFAULT_SETTINGS:
+        if key in data:
+            settings[key] = data[key]
+    return settings
+
+
+def save_settings(settings, path=None):
+    path = path or _settings_path()
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, 'w', encoding='utf-8') as f:
+        json.dump(settings, f, indent=2, ensure_ascii=False)
 
 # REAPER's chunk serializer quotes a string with double quotes by default,
 # falls back to single quotes if the value itself contains a double quote,
@@ -75,6 +127,25 @@ def _resolve_on_disk(path):
     return current if os.path.exists(current) else None
 
 
+def _search_in_folders(filename, folders):
+    """Look for `filename` (case-insensitive) anywhere under any of `folders`.
+
+    Mirrors REAPER's own media search path behaviour: if a project references
+    a file only by name in a location this tool doesn't know about, the user
+    can declare that location as an extra search folder instead of the file
+    being flagged merely "ambiguous". Returns the first match found, or None.
+    """
+    target = filename.lower()
+    for folder in folders:
+        if not folder or not os.path.isdir(folder):
+            continue
+        for root, dirs, files in os.walk(folder):
+            for f in files:
+                if f.lower() == target:
+                    return os.path.join(root, f)
+    return None
+
+
 def find_rpp_files(root_folder):
     """Recursively find .rpp/.rpp-bak files under root_folder.
 
@@ -97,8 +168,14 @@ def find_rpp_files(root_folder):
     return results
 
 
-def parse_used_media(rpp_paths):
+def parse_used_media(rpp_paths, extra_search_folders=None):
     """Extract media references from a list of .rpp/.rpp-bak file paths.
+
+    extra_search_folders: optional list of user-declared folders (equivalent
+      to REAPER's own media search path) to also check by filename when a
+      reference can't be resolved relative to the project or as an absolute
+      path. Resolving via these folders turns what would otherwise be an
+      "ambiguous" file into a confirmed used one.
 
     Returns (specific_used_paths, fallback_safe_names):
       - specific_used_paths: set of normalized, lowercased absolute paths
@@ -108,6 +185,7 @@ def parse_used_media(rpp_paths):
     """
     specific_used_paths = set()
     fallback_safe_names = set()
+    extra_search_folders = extra_search_folders or []
 
     for rpp_path in rpp_paths:
         project_folder = os.path.dirname(rpp_path)
@@ -127,6 +205,9 @@ def parse_used_media(rpp_paths):
             else:
                 resolved = _resolve_on_disk(os.path.join(project_folder, m_clean))
 
+            if not resolved and extra_search_folders:
+                resolved = _search_in_folders(filename, extra_search_folders)
+
             if resolved:
                 specific_used_paths.add(os.path.normpath(resolved).lower())
                 found_absolute = True
@@ -143,6 +224,8 @@ def find_unused_and_ambiguous_files(project_entries, specific_used_paths, fallba
 
     project_entries: iterable of (rpp_path, origin_name) for projects whose
       containing folder should be scanned for audio files.
+    audio_extensions: iterable of extensions (any casing, with leading dot,
+      list or tuple) to treat as media - user-configurable via settings.
 
     Returns (unused, ambiguous), each a deduplicated list of dicts
     (path, name, size_mb, origin):
@@ -152,6 +235,7 @@ def find_unused_and_ambiguous_files(project_entries, specific_used_paths, fallba
         it may or may not actually be in use. Reported separately so the
         user can review it instead of it silently vanishing from both lists.
     """
+    audio_extensions = tuple(ext.lower() for ext in audio_extensions)
     unused = {}
     ambiguous = {}
     for rpp_path, origin_name in project_entries:

@@ -279,3 +279,93 @@ def test_undo_last_archive_keeps_retryable_entry_on_partial_failure(tmp_path):
     assert errors == 1
     # The session must still be present so the user can be informed / can retry.
     assert reaper_core.has_undoable_session(str(tmp_path)) is True
+
+
+# --- settings ---
+
+def test_load_settings_returns_defaults_when_missing(tmp_path):
+    settings = reaper_core.load_settings(str(tmp_path / "settings.json"))
+    assert settings == reaper_core.DEFAULT_SETTINGS
+
+
+def test_save_and_load_settings_round_trip(tmp_path):
+    path = str(tmp_path / "nested" / "settings.json")
+    custom = {
+        "audio_extensions": [".wav", ".mp3"],
+        "extra_search_folders": [str(tmp_path / "SharedLibrary")],
+        "language": "fr",
+    }
+    reaper_core.save_settings(custom, path)
+
+    loaded = reaper_core.load_settings(path)
+    assert loaded == custom
+
+
+def test_load_settings_ignores_corrupt_file(tmp_path):
+    path = tmp_path / "settings.json"
+    path.write_text("{not valid json", encoding="utf-8")
+
+    settings = reaper_core.load_settings(str(path))
+    assert settings == reaper_core.DEFAULT_SETTINGS
+
+
+def test_load_settings_fills_in_missing_keys(tmp_path):
+    path = tmp_path / "settings.json"
+    path.write_text(json.dumps({"language": "fr"}), encoding="utf-8")
+
+    settings = reaper_core.load_settings(str(path))
+    assert settings["language"] == "fr"
+    assert settings["audio_extensions"] == list(reaper_core.AUDIO_EXTENSIONS)
+    assert settings["extra_search_folders"] == []
+
+
+# --- extra search folders (REAPER media search path equivalent) ---
+
+def test_parse_used_media_resolves_via_extra_search_folder(tmp_path):
+    library = tmp_path / "SharedLibrary"
+    library.mkdir()
+    oneshot = library / "oneshot.wav"
+    make_audio(oneshot)
+
+    rpp_path = tmp_path / "song.rpp"
+    # Reference points nowhere resolvable relative to the project or as an
+    # absolute path - only the filename matches something in the library.
+    make_rpp(rpp_path, ["../SomeGlobalLibrary/oneshot.wav"])
+
+    used_paths, fallback = reaper_core.parse_used_media([str(rpp_path)], extra_search_folders=[str(library)])
+
+    assert os.path.normpath(str(oneshot)).lower() in used_paths
+    assert fallback == set()
+
+
+def test_parse_used_media_without_extra_folders_falls_back(tmp_path):
+    library = tmp_path / "SharedLibrary"
+    library.mkdir()
+    make_audio(library / "oneshot.wav")
+
+    rpp_path = tmp_path / "song.rpp"
+    make_rpp(rpp_path, ["../SomeGlobalLibrary/oneshot.wav"])
+
+    used_paths, fallback = reaper_core.parse_used_media([str(rpp_path)])
+
+    assert used_paths == set()
+    assert "oneshot.wav" in fallback
+
+
+# --- configurable audio extensions ---
+
+def test_find_unused_and_ambiguous_files_respects_custom_extensions(tmp_path):
+    project_dir = tmp_path / "Proj1"
+    project_dir.mkdir()
+    make_audio(project_dir / "loop.wav")
+    make_audio(project_dir / "loop.xyz")  # not a default extension
+
+    rpp_path = project_dir / "Proj1.rpp"
+    make_rpp(rpp_path, [])
+
+    unused, ambiguous = reaper_core.find_unused_and_ambiguous_files(
+        [(str(rpp_path), "Proj1.rpp")], set(), set(), audio_extensions=[".xyz"]
+    )
+
+    assert {u["name"] for u in unused} == {"loop.xyz"}
+    assert ambiguous == []
