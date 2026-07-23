@@ -405,7 +405,7 @@ class App(ctk.CTk):
         for origin in sorted(groups.keys(), key=str.lower):
             group_items = groups[origin]
             total_mb = sum(f['size_mb'] for f in group_items)
-            row_plan.append(("header", origin, len(group_items), total_mb))
+            row_plan.append(("header", origin, group_items, total_mb))
             for item in group_items:
                 row_plan.append(("item", item))
 
@@ -424,14 +424,37 @@ class App(ctk.CTk):
         for grid_row in range(index, end):
             entry = row_plan[grid_row]
             if entry[0] == "header":
-                _, origin, count, total_mb = entry
-                header = tk.Label(
-                    self.files_scroll, bg=self._GROUP_HEADER_BG, fg="white", anchor="w",
-                    font=("Arial", 12, "bold"),
-                    text=f"{origin}   ({count} · {total_mb:.1f} MB)",
+                _, origin, group_items, total_mb = entry
+                header_frame = tk.Frame(self.files_scroll, bg=self._GROUP_HEADER_BG)
+                header_frame.grid(row=grid_row, column=0, columnspan=2, sticky="ew",
+                                  padx=2, pady=(8 if grid_row > 0 else 0, 2))
+
+                # Reflects "are all files in this group currently checked" at
+                # render time; toggling it acts on exactly the files in this
+                # group (respecting the active filter, since group_items is
+                # already the filtered subset) rather than trying to keep a
+                # live tri-state in sync with every individual checkbox.
+                all_selected = all(f['selected_var'].get() == 1 for f in group_items)
+                group_var = tk.IntVar(value=1 if all_selected else 0)
+
+                def on_group_toggle(group_items=group_items, group_var=group_var):
+                    new_state = group_var.get()
+                    for f in group_items:
+                        f['selected_var'].set(new_state)
+
+                group_cb = tk.Checkbutton(
+                    header_frame, variable=group_var, command=on_group_toggle,
+                    bg=self._GROUP_HEADER_BG, activebackground=self._GROUP_HEADER_BG,
+                    selectcolor="#333333", highlightthickness=0, bd=0,
                 )
-                header.grid(row=grid_row, column=0, columnspan=2, sticky="ew",
-                           padx=2, pady=(8 if grid_row > 0 else 0, 2))
+                group_cb.pack(side="left")
+
+                header_label = tk.Label(
+                    header_frame, bg=self._GROUP_HEADER_BG, fg="white", anchor="w",
+                    font=("Arial", 12, "bold"),
+                    text=f"{origin}   ({len(group_items)} · {total_mb:.1f} MB)",
+                )
+                header_label.pack(side="left", padx=(4, 0))
             else:
                 file = entry[1]
                 bg = self._ROW_ALT_BG if data_row_count % 2 else row_bg
