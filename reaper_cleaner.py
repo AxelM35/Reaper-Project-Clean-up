@@ -91,6 +91,7 @@ class App(ctk.CTk):
         ctk.CTkEntry(self.right_header, textvariable=self.unused_filter_var,
                     placeholder_text=self._t("filter_placeholder"), width=140).pack(side="left", padx=(15, 0))
         ctk.CTkButton(self.right_header, text=self._t("sort_size"), width=80, height=20, fg_color="#444", command=lambda: self.sort_unused("size")).pack(side="right", padx=2)
+        ctk.CTkButton(self.right_header, text=self._t("sort_name"), width=80, height=20, fg_color="#444", command=lambda: self.sort_unused("name")).pack(side="right", padx=2)
         ctk.CTkButton(self.right_header, text=self._t("select_none"), width=50, height=20, fg_color="#444", command=lambda: self.set_all_unused_selected(False)).pack(side="right", padx=2)
         ctk.CTkButton(self.right_header, text=self._t("select_all"), width=50, height=20, fg_color="#444", command=lambda: self.set_all_unused_selected(True)).pack(side="right", padx=2)
         self.selection_label = ctk.CTkLabel(self.right_header, text="", text_color="#9FCF9F", font=("Arial", 12))
@@ -382,7 +383,10 @@ class App(ctk.CTk):
         for widget in self.files_scroll.winfo_children(): widget.destroy()
 
         query = self.unused_filter_var.get().strip().lower()
-        items = [f for f in self.unused_files_data if not query or query in f['name'].lower()]
+        items = [
+            f for f in self.unused_files_data
+            if not query or query in f['name'].lower() or query in f['origin'].lower()
+        ]
 
         # The summary reflects the full underlying selection, not just what's
         # rendered so far, so it's correct immediately even while rows stream in.
@@ -449,7 +453,7 @@ class App(ctk.CTk):
     def set_all_unused_selected(self, selected):
         query = self.unused_filter_var.get().strip().lower()
         for file in self.unused_files_data:
-            if query and query not in file['name'].lower():
+            if query and query not in file['name'].lower() and query not in file['origin'].lower():
                 continue
             file['selected_var'].set(1 if selected else 0)
 
@@ -621,8 +625,13 @@ class App(ctk.CTk):
         self.render_projects()
 
     def sort_unused(self, key):
+        # Groups (see render_unused) are always ordered alphabetically by
+        # origin project, so this only controls the order of files *within*
+        # each group - not which project's section appears first.
         if key == "size":
             self.unused_files_data.sort(key=lambda x: x['size_mb'], reverse=True)
+        else:
+            self.unused_files_data.sort(key=lambda x: x['name'].lower())
         self.render_unused()
 
 if __name__ == "__main__":
