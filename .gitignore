@@ -42,3 +42,6 @@ dist/reaper_cleaner
 IA prompt.txt
 Reaper Project Clean up.code-workspace
 reaper_cleaner.spec
+__pycache__/
+*.pyc
+.pytest_cache/

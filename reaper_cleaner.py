@@ -1,16 +1,11 @@
-import os
-import shutil
-import re
-import datetime
 import customtkinter as ctk
 from tkinter import filedialog, messagebox
+
+import reaper_core
 
 # --- CONFIGURATION ---
 ctk.set_appearance_mode("Dark")
 ctk.set_default_color_theme("blue")
-
-# --- AUDIO FORMATS TO SCAN ---
-AUDIO_EXTENSIONS = ('.wav', '.aif', '.aiff', '.mp3', '.ogg', '.flac', '.mid')
 
 class App(ctk.CTk):
     def __init__(self):
@@ -19,26 +14,26 @@ class App(ctk.CTk):
         # Window Setup
         self.title("Reaper Project Cleaner - Clean and Archive Unused Audio Files")
         self.geometry("1200x800")
-        
+
         # Grid Configuration
-        self.grid_columnconfigure(0, weight=1) 
-        self.grid_columnconfigure(1, weight=1) 
+        self.grid_columnconfigure(0, weight=1)
+        self.grid_columnconfigure(1, weight=1)
         self.grid_rowconfigure(2, weight=1) # Scrollable area expands
 
         # --- DATA STATE ---
         self.root_folder = ""
         self.all_projects_data = []  # List of dicts
         self.unused_files_data = []  # List of dicts
-        
+
         # --- UI LAYOUT ---
 
         # 1. HEADER (Top)
         self.header_frame = ctk.CTkFrame(self, corner_radius=0, fg_color="transparent")
         self.header_frame.grid(row=0, column=0, columnspan=2, sticky="ew", padx=20, pady=(20, 10))
-        
+
         self.path_entry = ctk.CTkEntry(self.header_frame, placeholder_text="Select Project Root Folder...", width=600)
         self.path_entry.pack(side="left", padx=(0, 10))
-        
+
         self.scan_btn = ctk.CTkButton(self.header_frame, text="1. SCAN FOLDER", command=self.scan_folder, font=("Arial", 12, "bold"))
         self.scan_btn.pack(side="left")
 
@@ -64,7 +59,7 @@ class App(ctk.CTk):
         # 4. FOOTER ACTIONS
         self.action_frame = ctk.CTkFrame(self, height=80, fg_color="#2B2B2B")
         self.action_frame.grid(row=3, column=0, columnspan=2, sticky="ew", padx=0, pady=0)
-        
+
         self.status_label = ctk.CTkLabel(self.action_frame, text="Ready", text_color="gray")
         self.status_label.pack(side="left", padx=20)
 
@@ -77,48 +72,44 @@ class App(ctk.CTk):
                                         state="disabled", width=200, command=self.find_unused_logic)
         self.btn_search.pack(side="right", padx=10, pady=20)
 
+        self.btn_undo = ctk.CTkButton(self.action_frame, text="↩ UNDO LAST ARCHIVE", font=("Arial", 12, "bold"), text_color="white",
+                                      fg_color="#555", hover_color="#775555",
+                                      state="disabled", width=200, command=self.undo_last_archive_logic)
+        self.btn_undo.pack(side="right", padx=10, pady=20)
+
 
     # --- 1ST FUNCTION: SCANNING THE FOLDER FOR RPP FILES ---
     def scan_folder(self):
         path = filedialog.askdirectory()
         if not path: return
-        
+
         self.root_folder = path
         self.path_entry.delete(0, "end")
         self.path_entry.insert(0, path)
-        self.all_projects_data = []
 
         # Find RPP Files
-        for root, dirs, files in os.walk(path):
-            for file in files:
-                if file.lower().endswith(('.rpp', '.rpp-bak')):
-                    full_path = os.path.join(root, file)
-                    size = os.path.getsize(full_path) / (1024*1024)
-                    
-                    self.all_projects_data.append({
-                        "path": full_path,
-                        "name": file,
-                        "size_mb": size,
-                        "date": datetime.datetime.fromtimestamp(os.path.getmtime(full_path)).strftime('%Y-%m-%d'),
-                        "selected_var": ctk.IntVar(value=1) # Default Checked
-                    })
-        
+        found = reaper_core.find_rpp_files(path)
+        self.all_projects_data = [
+            {**proj, "selected_var": ctk.IntVar(value=1)} for proj in found
+        ]
+
         self.render_projects()
         self.btn_search.configure(state="normal")
+        self._refresh_undo_state()
         self.status_label.configure(text=f"Found {len(self.all_projects_data)} project files.")
 
     def render_projects(self):
         # Clear UI
         for widget in self.project_scroll.winfo_children(): widget.destroy()
-        
+
         # Re-draw UI
         for proj in self.all_projects_data:
             row = ctk.CTkFrame(self.project_scroll, fg_color="transparent")
             row.pack(fill="x", pady=2)
-            
+
             cb = ctk.CTkCheckBox(row, text=proj['name'], variable=proj['selected_var'], width=300)
             cb.pack(side="left")
-            
+
             lbl = ctk.CTkLabel(row, text=f"{proj['size_mb']:.2f} MB", text_color="gray", width=80, anchor="e")
             lbl.pack(side="right")
 
@@ -126,108 +117,36 @@ class App(ctk.CTk):
     # --- 2ND FUNCTION: FINDING UNUSED AUDIO FILES ---
     def find_unused_logic(self):
         self.status_label.configure(text="Analyzing for unused audio files...")
-        self.update() 
-        
-        # We need two safety nets:
-        # 1. specific_used_paths: Stores full absolute paths (e.g., "C:\Proj\Audio\kick.wav")
-        # 2. fallback_safe_names: Stores just filenames (e.g., "kick.wav") if we couldn't find the file
-        specific_used_paths = set()
-        fallback_safe_names = set()
-        
+        self.update()
+
         all_rpp_paths = [p['path'] for p in self.all_projects_data]
-        
-        print(f"--- STARTING SCAN ---")
+        specific_used_paths, fallback_safe_names = reaper_core.parse_used_media(all_rpp_paths)
 
-        for rpp_path in all_rpp_paths:
-            project_folder = os.path.dirname(rpp_path)
-            try:
-                with open(rpp_path, 'r', encoding='utf-8', errors='ignore') as f:
-                    content = f.read()
-                    matches = re.findall(r'FILE "(.*?)"', content)
-                    
-                    for m in matches:
-                        # Normalize slashes
-                        m_clean = m.replace('\\', '/')
-                        filename = m_clean.split('/')[-1].lower()
-                        
-                        # LOGIC: Try to find the actual file on disk
-                        found_absolute = False
-                        
-                        # Case A: RPP stored an absolute path (e.g., "C:/Sound/kick.wav")
-                        if os.path.isabs(m_clean):
-                            if os.path.exists(m_clean):
-                                specific_used_paths.add(os.path.normpath(m_clean).lower())
-                                found_absolute = True
-                        
-                        # Case B: RPP stored a relative path (e.g., "Audio/kick.wav")
-                        else:
-                            # Construct likely path relative to project file
-                            likely_path = os.path.join(project_folder, m_clean)
-                            if os.path.exists(likely_path):
-                                specific_used_paths.add(os.path.normpath(likely_path).lower())
-                                found_absolute = True
-                        
-                        # FAILSAFE: If we couldn't find the specific file (maybe it's in a global search path?)
-                        # We must add the filename to the fallback list to be safe.
-                        if not found_absolute:
-                            fallback_safe_names.add(filename)
+        checked_projects = [
+            (p['path'], p['name']) for p in self.all_projects_data if p['selected_var'].get() == 1
+        ]
+        unused = reaper_core.find_unused_files(checked_projects, specific_used_paths, fallback_safe_names)
 
-            except Exception as e:
-                print(f"Error reading {rpp_path}: {e}")
+        self.unused_files_data = [
+            {**item, "selected_var": ctk.IntVar(value=1)} for item in unused
+        ]
 
-        print(f"Smart Scan: Found {len(specific_used_paths)} specific paths and {len(fallback_safe_names)} fallback names.")
-        
-        # --- DISK COMPARISON ---
-        self.unused_files_data = []
-        checked_projects = [p for p in self.all_projects_data if p['selected_var'].get() == 1]
-
-        for proj in checked_projects:
-            project_dir = os.path.dirname(proj['path'])
-            
-            for root, dirs, files in os.walk(project_dir):
-                for file in files:
-                    if file.lower().endswith(AUDIO_EXTENSIONS):
-                        full_path = os.path.join(root, file)
-                        norm_path = os.path.normpath(full_path).lower()
-                        
-                        # 1. Is this EXACT path known to be used?
-                        if norm_path in specific_used_paths:
-                            continue # It's safe, skip it.
-
-                        # 2. Is the filename in the "Ambiguous/Fallback" list?
-                        if file.lower() in fallback_safe_names:
-                            continue # It might be used by a project we couldn't resolve. Skip it.
-
-                        # If we get here, it's truly unused
-                        size = os.path.getsize(full_path) / (1024*1024)
-                        self.unused_files_data.append({
-                            "path": full_path,
-                            "name": file,
-                            "size_mb": size,
-                            "origin": proj['name'],
-                            "selected_var": ctk.IntVar(value=1)
-                        })
-
-        # Final Cleanup
-        unique_unused = {item['path']: item for item in self.unused_files_data}.values()
-        self.unused_files_data = list(unique_unused)
         self.render_unused()
         self.btn_archive.configure(state="normal")
-        
+
         result_msg = f"Analysis Complete. Found {len(self.unused_files_data)} unused files."
-        print(result_msg)
         self.status_label.configure(text=result_msg)
-        
+
     def render_unused(self):
         for widget in self.files_scroll.winfo_children(): widget.destroy()
-        
+
         for file in self.unused_files_data:
             row = ctk.CTkFrame(self.files_scroll, fg_color="transparent")
             row.pack(fill="x", pady=2)
-            
+
             cb = ctk.CTkCheckBox(row, text=file['name'], variable=file['selected_var'], text_color="#FF9999")
             cb.pack(side="left")
-            
+
             # Show Origin Project
             meta = ctk.CTkLabel(row, text=f"[{file['origin']}]  {file['size_mb']:.1f}MB", text_color="gray", width=150, anchor="e")
             meta.pack(side="right")
@@ -236,45 +155,40 @@ class App(ctk.CTk):
     def archive_files_logic(self):
         # Filter only checked files
         files_to_move = [f for f in self.unused_files_data if f['selected_var'].get() == 1]
-        
+
         if not files_to_move:
             return
 
         confirm = messagebox.askyesno("Confirm Archive", f"Are you sure you want to move {len(files_to_move)} files to the Archive folder?")
         if not confirm: return
 
-        # Create Master Archive Folder
-        archive_root = os.path.join(self.root_folder, "_Reaper_Cleanup_Archive")
-        if not os.path.exists(archive_root):
-            os.makedirs(archive_root)
-
-        count = 0
-        errors = 0
-
-        for item in files_to_move:
-            try:
-                # Create Subfolder based on Project Name
-                # We strip the .rpp extension for the folder name
-                proj_folder_name = os.path.splitext(item['origin'])[0]
-                target_dir = os.path.join(archive_root, proj_folder_name)
-                
-                if not os.path.exists(target_dir):
-                    os.makedirs(target_dir)
-
-                # Move the file
-                shutil.move(item['path'], os.path.join(target_dir, item['name']))
-                count += 1
-            except Exception as e:
-                print(f"Error moving {item['name']}: {e}")
-                errors += 1
+        count, errors, archive_root = reaper_core.archive_files(files_to_move, self.root_folder)
 
         # Cleanup UI
         self.find_unused_logic() # Re-scan to update list
+        self._refresh_undo_state()
         messagebox.showinfo("Success", f"Archived {count} files.\nErrors: {errors}\n\nLocation: {archive_root}")
+
+    # --- LOGIC 4: UNDO LAST ARCHIVE ---
+    def undo_last_archive_logic(self):
+        if not self.root_folder or not reaper_core.has_undoable_session(self.root_folder):
+            return
+
+        confirm = messagebox.askyesno("Confirm Undo", "Restore the files from the last archive operation to their original location?")
+        if not confirm: return
+
+        restored, errors = reaper_core.undo_last_archive(self.root_folder)
+
+        self.find_unused_logic() # Re-scan to update list
+        self._refresh_undo_state()
+        messagebox.showinfo("Undo Complete", f"Restored {restored} files.\nErrors: {errors}")
+
+    def _refresh_undo_state(self):
+        can_undo = bool(self.root_folder) and reaper_core.has_undoable_session(self.root_folder)
+        self.btn_undo.configure(state="normal" if can_undo else "disabled")
 
     # --- SORTING HELPERS ---
     def sort_projects(self, key):
-        reverse = False
         if key == "size":
             self.all_projects_data.sort(key=lambda x: x['size_mb'], reverse=True)
         else:
