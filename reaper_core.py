@@ -16,6 +16,12 @@ ARCHIVE_FOLDER_NAME = "_Reaper_Cleanup_Archive"
 LOG_FILE_NAME = "archive_log.json"
 SETTINGS_FILE_NAME = "settings.json"
 
+
+class ScanCancelled(Exception):
+    """Raised by the scanning functions when `cancel_check` reports a
+    user-requested cancellation. Callers (typically a GUI worker thread)
+    catch this to stop early without treating it as an error."""
+
 DEFAULT_SETTINGS = {
     "audio_extensions": list(AUDIO_EXTENSIONS),
     # User-declared media search folders, equivalent to REAPER's own
@@ -146,13 +152,19 @@ def _search_in_folders(filename, folders):
     return None
 
 
-def find_rpp_files(root_folder):
+def find_rpp_files(root_folder, cancel_check=None):
     """Recursively find .rpp/.rpp-bak files under root_folder.
+
+    cancel_check: optional zero-arg callable; if it returns True, raises
+      ScanCancelled instead of continuing (checked once per directory,
+      so a large folder tree can be interrupted from another thread).
 
     Returns a list of dicts: path, name, size_mb, date.
     """
     results = []
     for root, dirs, files in os.walk(root_folder):
+        if cancel_check and cancel_check():
+            raise ScanCancelled()
         dirs[:] = [d for d in dirs if d != ARCHIVE_FOLDER_NAME]
         for file in files:
             if file.lower().endswith(('.rpp', '.rpp-bak')):
@@ -168,7 +180,7 @@ def find_rpp_files(root_folder):
     return results
 
 
-def parse_used_media(rpp_paths, extra_search_folders=None):
+def parse_used_media(rpp_paths, extra_search_folders=None, cancel_check=None):
     """Extract media references from a list of .rpp/.rpp-bak file paths.
 
     extra_search_folders: optional list of user-declared folders (equivalent
@@ -176,6 +188,8 @@ def parse_used_media(rpp_paths, extra_search_folders=None):
       reference can't be resolved relative to the project or as an absolute
       path. Resolving via these folders turns what would otherwise be an
       "ambiguous" file into a confirmed used one.
+    cancel_check: optional zero-arg callable; if it returns True, raises
+      ScanCancelled (checked once per project file).
 
     Returns (specific_used_paths, fallback_safe_names):
       - specific_used_paths: set of normalized, lowercased absolute paths
@@ -188,6 +202,8 @@ def parse_used_media(rpp_paths, extra_search_folders=None):
     extra_search_folders = extra_search_folders or []
 
     for rpp_path in rpp_paths:
+        if cancel_check and cancel_check():
+            raise ScanCancelled()
         project_folder = os.path.dirname(rpp_path)
         try:
             with open(rpp_path, 'r', encoding='utf-8', errors='ignore') as f:
@@ -219,13 +235,15 @@ def parse_used_media(rpp_paths, extra_search_folders=None):
 
 
 def find_unused_and_ambiguous_files(project_entries, specific_used_paths, fallback_safe_names,
-                                     audio_extensions=AUDIO_EXTENSIONS):
+                                     audio_extensions=AUDIO_EXTENSIONS, cancel_check=None):
     """Classify audio files found in the given projects' folders.
 
     project_entries: iterable of (rpp_path, origin_name) for projects whose
       containing folder should be scanned for audio files.
     audio_extensions: iterable of extensions (any casing, with leading dot,
       list or tuple) to treat as media - user-configurable via settings.
+    cancel_check: optional zero-arg callable; if it returns True, raises
+      ScanCancelled (checked once per project and once per directory walked).
 
     Returns (unused, ambiguous), each a deduplicated list of dicts
     (path, name, size_mb, origin):
@@ -239,8 +257,12 @@ def find_unused_and_ambiguous_files(project_entries, specific_used_paths, fallba
     unused = {}
     ambiguous = {}
     for rpp_path, origin_name in project_entries:
+        if cancel_check and cancel_check():
+            raise ScanCancelled()
         project_dir = os.path.dirname(rpp_path)
         for root, dirs, files in os.walk(project_dir):
+            if cancel_check and cancel_check():
+                raise ScanCancelled()
             dirs[:] = [d for d in dirs if d != ARCHIVE_FOLDER_NAME]
             for file in files:
                 if not file.lower().endswith(audio_extensions):

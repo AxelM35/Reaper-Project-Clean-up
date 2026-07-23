@@ -30,13 +30,24 @@ STRINGS = {
     "sort_size": {"en": "Sort Size", "fr": "Trier Taille"},
     "select_rpp_placeholder": {"en": "Select .rpp to analyze", "fr": "Sélectionner les .rpp à analyser"},
     "select_files_placeholder": {"en": "Select files to archive", "fr": "Sélectionner les fichiers à archiver"},
+    "filter_placeholder": {"en": "Filter...", "fr": "Filtrer..."},
+    "select_all": {"en": "All", "fr": "Tout"},
+    "select_none": {"en": "None", "fr": "Aucun"},
 
     "status_ready": {"en": "Ready", "fr": "Prêt"},
+    "status_scanning": {"en": "Scanning folder...", "fr": "Analyse du dossier en cours..."},
     "status_found_projects": {"en": "Found {n} project files.", "fr": "{n} fichiers projet trouvés."},
     "status_analyzing": {"en": "Analyzing for unused audio files...", "fr": "Analyse des fichiers audio inutilisés..."},
     "status_analysis_complete": {
         "en": "Analysis Complete. Found {n} unused files.",
         "fr": "Analyse terminée. {n} fichiers inutilisés trouvés.",
+    },
+    "status_cancelled": {"en": "Operation cancelled.", "fr": "Opération annulée."},
+    "cancel_button": {"en": "✕ Cancel", "fr": "✕ Annuler"},
+    "invalid_path_title": {"en": "Invalid Folder", "fr": "Dossier invalide"},
+    "invalid_path_msg": {
+        "en": "\"{path}\" is not a valid folder.",
+        "fr": "« {path} » n'est pas un dossier valide.",
     },
     "ambiguous_button": {"en": "⚠ Ambiguous files: {n}", "fr": "⚠ Fichiers ambigus : {n}"},
     "ambiguous_button_na": {"en": "⚠ Ambiguous files: n/a", "fr": "⚠ Fichiers ambigus : n/a"},
@@ -52,6 +63,10 @@ STRINGS = {
     "confirm_archive_msg": {
         "en": "Are you sure you want to move {n} files to the Archive folder?",
         "fr": "Confirmer le déplacement de {n} fichiers vers le dossier d'archive ?",
+    },
+    "no_files_selected_msg": {
+        "en": "No files are selected. Check at least one file to archive.",
+        "fr": "Aucun fichier sélectionné. Coche au moins un fichier à archiver.",
     },
     "archive_success_title": {"en": "Success", "fr": "Succès"},
     "archive_success_msg": {

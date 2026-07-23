@@ -1,4 +1,6 @@
 import datetime
+import os
+import threading
 
 import customtkinter as ctk
 from tkinter import filedialog, messagebox
@@ -37,6 +39,7 @@ class App(ctk.CTk):
         self.all_projects_data = []  # List of dicts
         self.unused_files_data = []  # List of dicts
         self.ambiguous_files_data = []  # List of dicts (excluded by the safety net)
+        self._cancel_event = threading.Event()
 
         # --- UI LAYOUT ---
 
@@ -46,25 +49,44 @@ class App(ctk.CTk):
 
         self.path_entry = ctk.CTkEntry(self.header_frame, placeholder_text=self._t("path_placeholder"), width=600)
         self.path_entry.pack(side="left", padx=(0, 10))
+        self.path_entry.bind("<Return>", self.scan_folder_from_entry)
 
         self.scan_btn = ctk.CTkButton(self.header_frame, text=self._t("scan_folder"), command=self.scan_folder, font=("Arial", 12, "bold"))
         self.scan_btn.pack(side="left")
+
+        # Progress bar + cancel button for long scans - created but not packed
+        # until an operation actually starts (see _start_progress/_stop_progress).
+        self.progress_bar = ctk.CTkProgressBar(self.header_frame, mode="indeterminate", width=160)
+        self.cancel_btn = ctk.CTkButton(self.header_frame, text=self._t("cancel_button"), width=90,
+                                        fg_color="#7A3B3B", hover_color="#8A4B4B", command=self._cancel_current_operation)
 
         self.settings_btn = ctk.CTkButton(self.header_frame, text=self._t("settings_button"), width=110,
                                           fg_color="#444", hover_color="#555", command=self.open_settings)
         self.settings_btn.pack(side="right")
 
-        # 2. COLUMN HEADERS (Sorting)
+        # 2. COLUMN HEADERS (Sorting, filtering, bulk selection)
         self.left_header = ctk.CTkFrame(self, fg_color="transparent")
         self.left_header.grid(row=1, column=0, sticky="ew", padx=20)
         ctk.CTkLabel(self.left_header, text=self._t("projects_found"), font=("Arial", 14, "bold")).pack(side="left")
+        self.project_filter_var = ctk.StringVar()
+        self.project_filter_var.trace_add("write", lambda *_: self.render_projects())
+        ctk.CTkEntry(self.left_header, textvariable=self.project_filter_var,
+                    placeholder_text=self._t("filter_placeholder"), width=140).pack(side="left", padx=(15, 0))
         ctk.CTkButton(self.left_header, text=self._t("sort_name"), width=80, height=20, fg_color="#444", command=lambda: self.sort_projects("name")).pack(side="right", padx=2)
         ctk.CTkButton(self.left_header, text=self._t("sort_size"), width=80, height=20, fg_color="#444", command=lambda: self.sort_projects("size")).pack(side="right", padx=2)
+        ctk.CTkButton(self.left_header, text=self._t("select_none"), width=50, height=20, fg_color="#444", command=lambda: self.set_all_projects_selected(False)).pack(side="right", padx=2)
+        ctk.CTkButton(self.left_header, text=self._t("select_all"), width=50, height=20, fg_color="#444", command=lambda: self.set_all_projects_selected(True)).pack(side="right", padx=2)
 
         self.right_header = ctk.CTkFrame(self, fg_color="transparent")
         self.right_header.grid(row=1, column=1, sticky="ew", padx=20)
         ctk.CTkLabel(self.right_header, text=self._t("unused_files"), font=("Arial", 14, "bold"), text_color="#FF5555").pack(side="left")
+        self.unused_filter_var = ctk.StringVar()
+        self.unused_filter_var.trace_add("write", lambda *_: self.render_unused())
+        ctk.CTkEntry(self.right_header, textvariable=self.unused_filter_var,
+                    placeholder_text=self._t("filter_placeholder"), width=140).pack(side="left", padx=(15, 0))
         ctk.CTkButton(self.right_header, text=self._t("sort_size"), width=80, height=20, fg_color="#444", command=lambda: self.sort_unused("size")).pack(side="right", padx=2)
+        ctk.CTkButton(self.right_header, text=self._t("select_none"), width=50, height=20, fg_color="#444", command=lambda: self.set_all_unused_selected(False)).pack(side="right", padx=2)
+        ctk.CTkButton(self.right_header, text=self._t("select_all"), width=50, height=20, fg_color="#444", command=lambda: self.set_all_unused_selected(True)).pack(side="right", padx=2)
         self.selection_label = ctk.CTkLabel(self.right_header, text="", text_color="#9FCF9F", font=("Arial", 12))
         self.selection_label.pack(side="right", padx=10)
 
@@ -115,42 +137,126 @@ class App(ctk.CTk):
     def _t(self, key, **kwargs):
         return t(key, self.lang, **kwargs)
 
+    # --- BACKGROUND TASK HELPER ---
+    def _run_in_background(self, task, on_success, on_cancelled=None):
+        """Run `task()` in a worker thread and dispatch its result back on the
+        main thread. Tk widgets must only be touched from the main thread, so
+        `task` must be a pure function (no widget access) - callers gather
+        whatever state they need from the UI *before* calling this."""
+        result_box = {}
+
+        def worker():
+            try:
+                result_box['value'] = task()
+            except reaper_core.ScanCancelled:
+                result_box['cancelled'] = True
+            except Exception as exc:  # pragma: no cover - defensive, surfaced to the user
+                result_box['error'] = exc
+
+        thread = threading.Thread(target=worker, daemon=True)
+        thread.start()
+
+        def poll():
+            if thread.is_alive():
+                self.after(80, poll)
+                return
+            if result_box.get('cancelled'):
+                if on_cancelled:
+                    on_cancelled()
+            elif 'error' in result_box:
+                self._stop_progress()
+                messagebox.showerror(self._t("settings_window_title"), str(result_box['error']))
+            else:
+                on_success(result_box.get('value'))
+
+        poll()
+
+    def _start_progress(self, status_text):
+        self._cancel_event.clear()
+        self.alert_banner.grid_remove()
+        self.status_label.configure(text=status_text)
+        self.progress_bar.pack(side="left", padx=10)
+        self.progress_bar.start()
+        self.cancel_btn.pack(side="left", padx=(0, 10))
+        self.scan_btn.configure(state="disabled")
+        self.settings_btn.configure(state="disabled")
+        self.btn_search.configure(state="disabled")
+        self.btn_archive.configure(state="disabled")
+        self.btn_undo.configure(state="disabled")
+
+    def _stop_progress(self):
+        self.progress_bar.stop()
+        self.progress_bar.pack_forget()
+        self.cancel_btn.pack_forget()
+        self.scan_btn.configure(state="normal")
+        self.settings_btn.configure(state="normal")
+
+    def _cancel_current_operation(self):
+        self._cancel_event.set()
+
     # --- 1ST FUNCTION: SCANNING THE FOLDER FOR RPP FILES ---
     def scan_folder(self):
         path = filedialog.askdirectory()
         if not path: return
+        self._begin_scan(path)
 
+    def scan_folder_from_entry(self, event=None):
+        path = self.path_entry.get().strip()
+        if not path:
+            return
+        if not os.path.isdir(path):
+            messagebox.showerror(self._t("invalid_path_title"), self._t("invalid_path_msg", path=path))
+            return
+        self._begin_scan(path)
+
+    def _begin_scan(self, path):
         self.root_folder = path
         self.path_entry.delete(0, "end")
         self.path_entry.insert(0, path)
 
-        # Find RPP Files
-        found = reaper_core.find_rpp_files(path)
-        self.all_projects_data = [
-            {**proj, "selected_var": ctk.IntVar(value=1)} for proj in found
-        ]
-        self.ambiguous_files_data = []
-        self.ambiguous_btn.configure(text=self._t("ambiguous_button_na"))
-        self._update_ambiguous_banner()
+        self._start_progress(self._t("status_scanning"))
 
-        # A fresh scan invalidates any previous "unused files" results until
-        # "Find Unused" is re-run - otherwise the right panel would keep
-        # showing stale results from a different folder.
-        self.unused_files_data = []
-        self.render_unused()
-        self.btn_archive.configure(state="disabled")
+        def task():
+            return reaper_core.find_rpp_files(path, cancel_check=self._cancel_event.is_set)
 
-        self.render_projects()
-        self.btn_search.configure(state="normal")
-        self._refresh_undo_state()
-        self.status_label.configure(text=self._t("status_found_projects", n=len(self.all_projects_data)))
+        def on_success(found):
+            self._stop_progress()
+            self.all_projects_data = [
+                {**proj, "selected_var": ctk.IntVar(value=1)} for proj in found
+            ]
+            self.ambiguous_files_data = []
+            self.ambiguous_btn.configure(text=self._t("ambiguous_button_na"))
+            self._update_ambiguous_banner()
+
+            # A fresh scan invalidates any previous "unused files" results
+            # until "Find Unused" is re-run - otherwise the right panel
+            # would keep showing stale results from a different folder.
+            self.unused_files_data = []
+            self.render_unused()
+            self.btn_archive.configure(state="disabled")
+
+            self.render_projects()
+            self.btn_search.configure(state="normal")
+            self._refresh_undo_state()
+            self.status_label.configure(text=self._t("status_found_projects", n=len(self.all_projects_data)))
+
+        def on_cancelled():
+            self._stop_progress()
+            self.btn_search.configure(state="normal" if self.all_projects_data else "disabled")
+            self._refresh_undo_state()
+            self.status_label.configure(text=self._t("status_cancelled"))
+
+        self._run_in_background(task, on_success, on_cancelled)
 
     def render_projects(self):
         # Clear UI
         for widget in self.project_scroll.winfo_children(): widget.destroy()
 
+        query = self.project_filter_var.get().strip().lower()
         # Re-draw UI
         for proj in self.all_projects_data:
+            if query and query not in proj['name'].lower():
+                continue
             row = ctk.CTkFrame(self.project_scroll, fg_color="transparent")
             row.pack(fill="x", pady=2)
 
@@ -160,40 +266,66 @@ class App(ctk.CTk):
             lbl = ctk.CTkLabel(row, text=f"{proj['size_mb']:.2f} MB", text_color="gray", width=80, anchor="e")
             lbl.pack(side="right")
 
+    def set_all_projects_selected(self, selected):
+        query = self.project_filter_var.get().strip().lower()
+        for proj in self.all_projects_data:
+            if query and query not in proj['name'].lower():
+                continue
+            proj['selected_var'].set(1 if selected else 0)
+
 
     # --- 2ND FUNCTION: FINDING UNUSED AUDIO FILES ---
     def find_unused_logic(self):
-        self.status_label.configure(text=self._t("status_analyzing"))
-        self.update()
-
         all_rpp_paths = [p['path'] for p in self.all_projects_data]
-        extra_folders = self.settings.get("extra_search_folders", [])
-        specific_used_paths, fallback_safe_names = reaper_core.parse_used_media(all_rpp_paths, extra_folders)
-
         checked_projects = [
             (p['path'], p['name']) for p in self.all_projects_data if p['selected_var'].get() == 1
         ]
+        extra_folders = self.settings.get("extra_search_folders", [])
         audio_extensions = self.settings.get("audio_extensions") or reaper_core.AUDIO_EXTENSIONS
-        unused, ambiguous = reaper_core.find_unused_and_ambiguous_files(
-            checked_projects, specific_used_paths, fallback_safe_names, audio_extensions
-        )
 
-        self.unused_files_data = [
-            {**item, "selected_var": ctk.IntVar(value=1)} for item in unused
-        ]
-        self.ambiguous_files_data = ambiguous
-        self.ambiguous_btn.configure(text=self._t("ambiguous_button", n=len(ambiguous)))
-        self._update_ambiguous_banner()
+        self._start_progress(self._t("status_analyzing"))
 
-        self.render_unused()
-        self.btn_archive.configure(state="normal")
+        def task():
+            specific_used_paths, fallback_safe_names = reaper_core.parse_used_media(
+                all_rpp_paths, extra_folders, cancel_check=self._cancel_event.is_set
+            )
+            return reaper_core.find_unused_and_ambiguous_files(
+                checked_projects, specific_used_paths, fallback_safe_names, audio_extensions,
+                cancel_check=self._cancel_event.is_set,
+            )
 
-        self.status_label.configure(text=self._t("status_analysis_complete", n=len(self.unused_files_data)))
+        def on_success(result):
+            unused, ambiguous = result
+            self._stop_progress()
+            self.unused_files_data = [
+                {**item, "selected_var": ctk.IntVar(value=1)} for item in unused
+            ]
+            self.ambiguous_files_data = ambiguous
+            self.ambiguous_btn.configure(text=self._t("ambiguous_button", n=len(ambiguous)))
+            self._update_ambiguous_banner()
+
+            self.render_unused()
+            self.btn_archive.configure(state="normal")
+            self.btn_search.configure(state="normal")
+            self._refresh_undo_state()
+
+            self.status_label.configure(text=self._t("status_analysis_complete", n=len(self.unused_files_data)))
+
+        def on_cancelled():
+            self._stop_progress()
+            self.btn_search.configure(state="normal")
+            self._refresh_undo_state()
+            self.status_label.configure(text=self._t("status_cancelled"))
+
+        self._run_in_background(task, on_success, on_cancelled)
 
     def render_unused(self):
         for widget in self.files_scroll.winfo_children(): widget.destroy()
 
+        query = self.unused_filter_var.get().strip().lower()
         for file in self.unused_files_data:
+            if query and query not in file['name'].lower():
+                continue
             row = ctk.CTkFrame(self.files_scroll, fg_color="transparent")
             row.pack(fill="x", pady=2)
 
@@ -206,6 +338,13 @@ class App(ctk.CTk):
             meta.pack(side="right")
 
         self._update_selection_summary()
+
+    def set_all_unused_selected(self, selected):
+        query = self.unused_filter_var.get().strip().lower()
+        for file in self.unused_files_data:
+            if query and query not in file['name'].lower():
+                continue
+            file['selected_var'].set(1 if selected else 0)
 
     def _update_selection_summary(self):
         selected = [f for f in self.unused_files_data if f['selected_var'].get() == 1]
@@ -251,6 +390,7 @@ class App(ctk.CTk):
         files_to_move = [f for f in self.unused_files_data if f['selected_var'].get() == 1]
 
         if not files_to_move:
+            messagebox.showinfo(self._t("confirm_archive_title"), self._t("no_files_selected_msg"))
             return
 
         confirm = messagebox.askyesno(self._t("confirm_archive_title"), self._t("confirm_archive_msg", n=len(files_to_move)))
@@ -259,8 +399,8 @@ class App(ctk.CTk):
         count, errors, archive_root = reaper_core.archive_files(files_to_move, self.root_folder)
 
         # Cleanup UI
-        self.find_unused_logic() # Re-scan to update list
         self._refresh_undo_state()
+        self.find_unused_logic() # Re-scan to update list (async)
         messagebox.showinfo(self._t("archive_success_title"), self._t("archive_success_msg", count=count, errors=errors, location=archive_root))
 
     # --- LOGIC 4: UNDO LAST ARCHIVE ---
@@ -272,7 +412,7 @@ class App(ctk.CTk):
             return
 
         entries = session["entries"]
-        names = [e.get("name") or e["dest"].rsplit("/", 1)[-1] for e in entries]
+        names = [e.get("name") or os.path.basename(e["dest"]) for e in entries]
         preview = "\n".join(f"  • {name}" for name in names[:10])
         if len(names) > 10:
             preview += "\n  " + self._t("and_n_more", n=len(names) - 10)
@@ -290,8 +430,8 @@ class App(ctk.CTk):
 
         restored, errors = reaper_core.undo_last_archive(self.root_folder)
 
-        self.find_unused_logic() # Re-scan to update list
         self._refresh_undo_state()
+        self.find_unused_logic() # Re-scan to update list (async)
         messagebox.showinfo(self._t("undo_complete_title"), self._t("undo_complete_msg", restored=restored, errors=errors))
 
     def _refresh_undo_state(self):

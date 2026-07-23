@@ -1,6 +1,8 @@
 import json
 import os
 
+import pytest
+
 import reaper_core
 
 
@@ -393,3 +395,35 @@ def test_get_last_archive_session_returns_latest_without_consuming_it(tmp_path):
 
     # A read-only peek must not remove the session - undo must still work after it.
     assert reaper_core.has_undoable_session(str(tmp_path)) is True
+
+
+# --- cooperative cancellation (used by the GUI's background scan thread) ---
+
+def test_find_rpp_files_raises_when_cancelled(tmp_path):
+    (tmp_path / "song.rpp").write_text("dummy")
+    with pytest.raises(reaper_core.ScanCancelled):
+        reaper_core.find_rpp_files(str(tmp_path), cancel_check=lambda: True)
+
+
+def test_parse_used_media_raises_when_cancelled(tmp_path):
+    rpp_path = tmp_path / "song.rpp"
+    make_rpp(rpp_path, ["kick.wav"])
+    with pytest.raises(reaper_core.ScanCancelled):
+        reaper_core.parse_used_media([str(rpp_path)], cancel_check=lambda: True)
+
+
+def test_find_unused_and_ambiguous_files_raises_when_cancelled(tmp_path):
+    project_dir = tmp_path / "Proj1"
+    project_dir.mkdir()
+    rpp_path = project_dir / "Proj1.rpp"
+    make_rpp(rpp_path, [])
+    with pytest.raises(reaper_core.ScanCancelled):
+        reaper_core.find_unused_and_ambiguous_files(
+            [(str(rpp_path), "Proj1.rpp")], set(), set(), cancel_check=lambda: True
+        )
+
+
+def test_find_rpp_files_not_cancelled_when_check_returns_false(tmp_path):
+    (tmp_path / "song.rpp").write_text("dummy")
+    found = reaper_core.find_rpp_files(str(tmp_path), cancel_check=lambda: False)
+    assert [f["name"] for f in found] == ["song.rpp"]
