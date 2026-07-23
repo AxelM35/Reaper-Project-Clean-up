@@ -201,7 +201,7 @@ class App(ctk.CTk):
     def _cancel_current_operation(self):
         self._cancel_event.set()
 
-    # --- 1ST FUNCTION: SCANNING THE FOLDER FOR RPP FILES ---
+    # --- SCANNING THE FOLDER FOR RPP FILES ---
     def scan_folder(self):
         path = filedialog.askdirectory()
         if not path: return
@@ -327,7 +327,7 @@ class App(ctk.CTk):
             proj['selected_var'].set(1 if selected else 0)
 
 
-    # --- 2ND FUNCTION: FINDING UNUSED AUDIO FILES ---
+    # --- FINDING UNUSED AUDIO FILES ---
     def find_unused_logic(self):
         all_rpp_paths = [p['path'] for p in self.all_projects_data]
         checked_projects = [
@@ -520,7 +520,7 @@ class App(ctk.CTk):
             tk.Label(row, text=f"[{file['origin']}]  {file['size_mb']:.1f}MB", fg="gray", bg=row_bg,
                     anchor="e", font=("Arial", 11)).pack(side="right", padx=(0, 10))
 
-    # --- LOGIC 3: ARCHIVER ---
+    # --- ARCHIVING ---
     def archive_files_logic(self):
         # Filter only checked files
         files_to_move = [f for f in self.unused_files_data if f['selected_var'].get() == 1]
@@ -539,7 +539,7 @@ class App(ctk.CTk):
         self.find_unused_logic() # Re-scan to update list (async)
         messagebox.showinfo(self._t("archive_success_title"), self._t("archive_success_msg", count=count, errors=errors, location=archive_root))
 
-    # --- LOGIC 4: UNDO LAST ARCHIVE ---
+    # --- UNDO LAST ARCHIVE ---
     def undo_last_archive_logic(self):
         if not self.root_folder:
             return

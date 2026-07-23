@@ -3,7 +3,7 @@
 A small dict-based lookup rather than a full gettext/babel setup, sized to
 match the app: two supported languages (English, French), no plural rules,
 no runtime locale detection. Changing the language takes effect on next
-launch (see the "settings_restart_notice" string) rather than re-labelling
+launch (see the "settings_saved_msg" string) rather than re-labelling
 every already-built widget live.
 """
 

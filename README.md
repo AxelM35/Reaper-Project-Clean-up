@@ -62,7 +62,7 @@ Settings (⚙) let you change the scanned audio extensions, add extra media sear
 ## Development
 
 ```bash
-pip install -r requirements.txt
+pip install -r requirements-dev.txt
 python -m pytest -v
 ```
 
@@ -70,7 +70,6 @@ python -m pytest -v
 - `reaper_cleaner.py` — the customtkinter GUI, built on top of `reaper_core`.
 - `i18n.py` — the English/French string tables.
 - `tests/` — unit tests for `reaper_core.py`.
-- `CAHIER_DES_CHARGES.md` — a reverse-engineered functional spec of the tool (French).
 
 Bug reports, test coverage on real-world project libraries, and pull requests are all very welcome — this started as a first-coding-project prototype and the goal is to keep making it more trustworthy.
 
