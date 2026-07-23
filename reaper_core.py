@@ -293,6 +293,14 @@ def has_undoable_session(root_folder):
     return len(_load_log(root_folder)) > 0
 
 
+def get_last_archive_session(root_folder):
+    """Return the most recent archive session (timestamp + entries) without
+    consuming it, so the UI can show what an undo would restore before the
+    user confirms. Returns None if there is nothing to undo."""
+    sessions = _load_log(root_folder)
+    return sessions[-1] if sessions else None
+
+
 def archive_files(files_to_move, root_folder):
     """Move given files into _Reaper_Cleanup_Archive/<project>/ and log the move.
 
@@ -319,6 +327,7 @@ def archive_files(files_to_move, root_folder):
             session_entries.append({
                 "source": item['path'],
                 "dest": dest_path,
+                "name": item['name'],
                 "origin": item['origin'],
             })
             moved_count += 1

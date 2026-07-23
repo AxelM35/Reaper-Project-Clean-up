@@ -40,6 +40,13 @@ STRINGS = {
     },
     "ambiguous_button": {"en": "⚠ Ambiguous files: {n}", "fr": "⚠ Fichiers ambigus : {n}"},
     "ambiguous_button_na": {"en": "⚠ Ambiguous files: n/a", "fr": "⚠ Fichiers ambigus : n/a"},
+    "ambiguous_banner_msg": {
+        "en": "⚠ {n} ambiguous file(s) found - excluded from archiving until reviewed.",
+        "fr": "⚠ {n} fichier(s) ambigu(s) détecté(s) - exclus de l'archivage tant qu'ils ne sont pas vérifiés.",
+    },
+    "ambiguous_review_button": {"en": "Review", "fr": "Vérifier"},
+
+    "selection_summary": {"en": "{count} selected · {size:.1f} MB", "fr": "{count} sélectionné(s) · {size:.1f} Mo"},
 
     "confirm_archive_title": {"en": "Confirm Archive", "fr": "Confirmer l'archivage"},
     "confirm_archive_msg": {
@@ -57,6 +64,11 @@ STRINGS = {
         "en": "Restore the files from the last archive operation to their original location?",
         "fr": "Restaurer à leur emplacement d'origine les fichiers du dernier archivage ?",
     },
+    "confirm_undo_msg_detailed": {
+        "en": "Restore {n} file(s) from the archive performed on {timestamp}?\n\n{files}",
+        "fr": "Restaurer {n} fichier(s) de l'archivage effectué le {timestamp} ?\n\n{files}",
+    },
+    "and_n_more": {"en": "… and {n} more", "fr": "… et {n} de plus"},
     "undo_complete_title": {"en": "Undo Complete", "fr": "Annulation terminée"},
     "undo_complete_msg": {
         "en": "Restored {restored} files.\nErrors: {errors}",

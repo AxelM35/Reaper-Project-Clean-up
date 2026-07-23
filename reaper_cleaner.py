@@ -1,3 +1,5 @@
+import datetime
+
 import customtkinter as ctk
 from tkinter import filedialog, messagebox
 
@@ -63,6 +65,8 @@ class App(ctk.CTk):
         self.right_header.grid(row=1, column=1, sticky="ew", padx=20)
         ctk.CTkLabel(self.right_header, text=self._t("unused_files"), font=("Arial", 14, "bold"), text_color="#FF5555").pack(side="left")
         ctk.CTkButton(self.right_header, text=self._t("sort_size"), width=80, height=20, fg_color="#444", command=lambda: self.sort_unused("size")).pack(side="right", padx=2)
+        self.selection_label = ctk.CTkLabel(self.right_header, text="", text_color="#9FCF9F", font=("Arial", 12))
+        self.selection_label.pack(side="right", padx=10)
 
         # 3. SCROLLABLE AREAS
         self.project_scroll = ctk.CTkScrollableFrame(self, label_text=self._t("select_rpp_placeholder"))
@@ -71,9 +75,19 @@ class App(ctk.CTk):
         self.files_scroll = ctk.CTkScrollableFrame(self, label_text=self._t("select_files_placeholder"))
         self.files_scroll.grid(row=2, column=1, sticky="nsew", padx=20, pady=5)
 
+        # 3.5 AMBIGUOUS FILES ALERT BANNER (hidden unless there is something to review)
+        self.alert_banner = ctk.CTkFrame(self, fg_color="#4A3B1E", corner_radius=6)
+        self.alert_banner.grid(row=3, column=0, columnspan=2, sticky="ew", padx=20, pady=(0, 10))
+        self.alert_banner_label = ctk.CTkLabel(self.alert_banner, text="", text_color="#F5C767", font=("Arial", 12, "bold"))
+        self.alert_banner_label.pack(side="left", padx=15, pady=10)
+        ctk.CTkButton(self.alert_banner, text=self._t("ambiguous_review_button"), width=100,
+                     fg_color="#F5C767", text_color="#2B2B2B", hover_color="#E0B050",
+                     command=self.show_ambiguous_files).pack(side="right", padx=15, pady=10)
+        self.alert_banner.grid_remove()
+
         # 4. FOOTER ACTIONS
         self.action_frame = ctk.CTkFrame(self, height=80, fg_color="#2B2B2B")
-        self.action_frame.grid(row=3, column=0, columnspan=2, sticky="ew", padx=0, pady=0)
+        self.action_frame.grid(row=4, column=0, columnspan=2, sticky="ew", padx=0, pady=0)
 
         self.status_label = ctk.CTkLabel(self.action_frame, text=self._t("status_ready"), text_color="gray")
         self.status_label.pack(side="left", padx=20)
@@ -117,6 +131,14 @@ class App(ctk.CTk):
         ]
         self.ambiguous_files_data = []
         self.ambiguous_btn.configure(text=self._t("ambiguous_button_na"))
+        self._update_ambiguous_banner()
+
+        # A fresh scan invalidates any previous "unused files" results until
+        # "Find Unused" is re-run - otherwise the right panel would keep
+        # showing stale results from a different folder.
+        self.unused_files_data = []
+        self.render_unused()
+        self.btn_archive.configure(state="disabled")
 
         self.render_projects()
         self.btn_search.configure(state="normal")
@@ -161,6 +183,7 @@ class App(ctk.CTk):
         ]
         self.ambiguous_files_data = ambiguous
         self.ambiguous_btn.configure(text=self._t("ambiguous_button", n=len(ambiguous)))
+        self._update_ambiguous_banner()
 
         self.render_unused()
         self.btn_archive.configure(state="normal")
@@ -176,10 +199,26 @@ class App(ctk.CTk):
 
             cb = ctk.CTkCheckBox(row, text=file['name'], variable=file['selected_var'], text_color="#FF9999")
             cb.pack(side="left")
+            file['selected_var'].trace_add("write", lambda *_: self._update_selection_summary())
 
             # Show Origin Project
             meta = ctk.CTkLabel(row, text=f"[{file['origin']}]  {file['size_mb']:.1f}MB", text_color="gray", width=150, anchor="e")
             meta.pack(side="right")
+
+        self._update_selection_summary()
+
+    def _update_selection_summary(self):
+        selected = [f for f in self.unused_files_data if f['selected_var'].get() == 1]
+        total_mb = sum(f['size_mb'] for f in selected)
+        self.selection_label.configure(text=self._t("selection_summary", count=len(selected), size=total_mb))
+
+    def _update_ambiguous_banner(self):
+        count = len(self.ambiguous_files_data)
+        if count > 0:
+            self.alert_banner_label.configure(text=self._t("ambiguous_banner_msg", n=count))
+            self.alert_banner.grid()
+        else:
+            self.alert_banner.grid_remove()
 
     # --- TRANSPARENCY: SHOW FILES EXCLUDED BY THE SAFETY NET ---
     def show_ambiguous_files(self):
@@ -226,10 +265,27 @@ class App(ctk.CTk):
 
     # --- LOGIC 4: UNDO LAST ARCHIVE ---
     def undo_last_archive_logic(self):
-        if not self.root_folder or not reaper_core.has_undoable_session(self.root_folder):
+        if not self.root_folder:
+            return
+        session = reaper_core.get_last_archive_session(self.root_folder)
+        if not session:
             return
 
-        confirm = messagebox.askyesno(self._t("confirm_undo_title"), self._t("confirm_undo_msg"))
+        entries = session["entries"]
+        names = [e.get("name") or e["dest"].rsplit("/", 1)[-1] for e in entries]
+        preview = "\n".join(f"  • {name}" for name in names[:10])
+        if len(names) > 10:
+            preview += "\n  " + self._t("and_n_more", n=len(names) - 10)
+
+        try:
+            timestamp = datetime.datetime.fromisoformat(session["timestamp"]).strftime("%Y-%m-%d %H:%M")
+        except ValueError:
+            timestamp = session["timestamp"]
+
+        confirm = messagebox.askyesno(
+            self._t("confirm_undo_title"),
+            self._t("confirm_undo_msg_detailed", n=len(entries), timestamp=timestamp, files=preview),
+        )
         if not confirm: return
 
         restored, errors = reaper_core.undo_last_archive(self.root_folder)

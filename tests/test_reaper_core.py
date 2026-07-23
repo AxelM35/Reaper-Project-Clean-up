@@ -369,3 +369,27 @@ def test_find_unused_and_ambiguous_files_respects_custom_extensions(tmp_path):
 
     assert {u["name"] for u in unused} == {"loop.xyz"}
     assert ambiguous == []
+
+
+# --- get_last_archive_session ---
+
+def test_get_last_archive_session_returns_none_when_nothing_archived(tmp_path):
+    assert reaper_core.get_last_archive_session(str(tmp_path)) is None
+
+
+def test_get_last_archive_session_returns_latest_without_consuming_it(tmp_path):
+    project_dir = tmp_path / "Proj1"
+    project_dir.mkdir()
+    audio = project_dir / "unused.wav"
+    make_audio(audio)
+
+    files_to_move = [{"path": str(audio), "name": "unused.wav", "origin": "Proj1.rpp"}]
+    reaper_core.archive_files(files_to_move, str(tmp_path))
+
+    session = reaper_core.get_last_archive_session(str(tmp_path))
+    assert session is not None
+    assert session["entries"][0]["name"] == "unused.wav"
+    assert session["entries"][0]["source"] == str(audio)
+
+    # A read-only peek must not remove the session - undo must still work after it.
+    assert reaper_core.has_undoable_session(str(tmp_path)) is True
