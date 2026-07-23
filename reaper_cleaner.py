@@ -28,7 +28,7 @@ class App(ctk.CTk):
 
         # Window Setup
         self.title(self._t("window_title"))
-        self.geometry("1800x1200")  # +50% vs. the original 1200x800
+        self.geometry("1800x800")  # +50% en largeur vs. l'original 1200x800, hauteur inchangée
 
         # Grid Configuration
         self.grid_columnconfigure(0, weight=1)
