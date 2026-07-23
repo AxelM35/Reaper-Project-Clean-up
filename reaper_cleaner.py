@@ -263,12 +263,21 @@ class App(ctk.CTk):
             return color[1] if ctk.get_appearance_mode() == "Dark" else color[0]
         return color
 
+    # Zebra striping / group-header shades, layered on top of the base
+    # _row_bg() so alternating rows and group headers stay readable at a
+    # glance without needing a real spreadsheet-style grid widget.
+    _ROW_ALT_BG = "gray20"
+    _GROUP_HEADER_BG = "gray24"
+
     def render_projects(self):
         # Clear UI
         for widget in self.project_scroll.winfo_children(): widget.destroy()
 
         query = self.project_filter_var.get().strip().lower()
         items = [p for p in self.all_projects_data if not query or query in p['name'].lower()]
+
+        self.project_scroll.grid_columnconfigure(0, weight=1)
+        self.project_scroll.grid_columnconfigure(1, weight=0)
 
         self._project_render_token += 1
         self._render_project_batch(items, 0, self._project_render_token)
@@ -288,19 +297,23 @@ class App(ctk.CTk):
 
         row_bg = self._row_bg(self.project_scroll)
         end = min(index + batch_size, len(items))
-        for proj in items[index:end]:
-            row = tk.Frame(self.project_scroll, bg=row_bg)
-            row.pack(fill="x", pady=2)
-
-            cb = tk.Checkbutton(row, text=proj['name'], variable=proj['selected_var'],
-                                bg=row_bg, fg="white", selectcolor="#333333",
-                                activebackground=row_bg, activeforeground="white",
+        for row_index in range(index, end):
+            proj = items[row_index]
+            # Widgets are gridded directly into the scrollable frame (two
+            # fixed columns) rather than packed inside a per-row Frame, so
+            # the size column lines up at the same x position on every row
+            # regardless of filename length - an actual table, not an
+            # approximation of one.
+            bg = self._ROW_ALT_BG if row_index % 2 else row_bg
+            cb = tk.Checkbutton(self.project_scroll, text=proj['name'], variable=proj['selected_var'],
+                                bg=bg, fg="white", selectcolor="#333333",
+                                activebackground=bg, activeforeground="white",
                                 highlightthickness=0, bd=0, anchor="w", font=("Arial", 12))
-            cb.pack(side="left")
+            cb.grid(row=row_index, column=0, sticky="ew", padx=(4, 10), pady=1)
 
-            lbl = tk.Label(row, text=f"{proj['size_mb']:.2f} MB", fg="gray", bg=row_bg,
+            lbl = tk.Label(self.project_scroll, text=f"{proj['size_mb']:.2f} MB", fg="gray", bg=bg,
                           anchor="e", font=("Arial", 11))
-            lbl.pack(side="right", padx=(0, 10))
+            lbl.grid(row=row_index, column=1, sticky="e", padx=(0, 10), pady=1)
 
         if end < len(items):
             self.after(1, lambda: self._render_project_batch(items, end, token, batch_size))
@@ -375,32 +388,63 @@ class App(ctk.CTk):
         # rendered so far, so it's correct immediately even while rows stream in.
         self._update_selection_summary()
 
-        self._unused_render_token += 1
-        self._render_unused_batch(items, 0, self._unused_render_token)
+        # Group by origin project so it's immediately obvious which project
+        # each unused file came from (a section header), instead of a small
+        # gray suffix on every single row that's easy to miss. Groups are
+        # ordered alphabetically for a predictable "table of contents";
+        # within a group, files keep whatever Name/Size sort order is active.
+        groups = {}
+        for item in items:
+            groups.setdefault(item['origin'], []).append(item)
 
-    def _render_unused_batch(self, items, index, token, batch_size=60):
+        row_plan = []
+        for origin in sorted(groups.keys(), key=str.lower):
+            group_items = groups[origin]
+            total_mb = sum(f['size_mb'] for f in group_items)
+            row_plan.append(("header", origin, len(group_items), total_mb))
+            for item in group_items:
+                row_plan.append(("item", item))
+
+        self.files_scroll.grid_columnconfigure(0, weight=1)
+        self.files_scroll.grid_columnconfigure(1, weight=0)
+
+        self._unused_render_token += 1
+        self._render_unused_batch(row_plan, 0, self._unused_render_token, data_row_count=0)
+
+    def _render_unused_batch(self, row_plan, index, token, data_row_count, batch_size=60):
         if token != self._unused_render_token:
             return  # superseded by a newer render_unused() call
 
         row_bg = self._row_bg(self.files_scroll)
-        end = min(index + batch_size, len(items))
-        for file in items[index:end]:
-            row = tk.Frame(self.files_scroll, bg=row_bg)
-            row.pack(fill="x", pady=2)
+        end = min(index + batch_size, len(row_plan))
+        for grid_row in range(index, end):
+            entry = row_plan[grid_row]
+            if entry[0] == "header":
+                _, origin, count, total_mb = entry
+                header = tk.Label(
+                    self.files_scroll, bg=self._GROUP_HEADER_BG, fg="white", anchor="w",
+                    font=("Arial", 12, "bold"),
+                    text=f"{origin}   ({count} · {total_mb:.1f} MB)",
+                )
+                header.grid(row=grid_row, column=0, columnspan=2, sticky="ew",
+                           padx=2, pady=(8 if grid_row > 0 else 0, 2))
+            else:
+                file = entry[1]
+                bg = self._ROW_ALT_BG if data_row_count % 2 else row_bg
+                data_row_count += 1
 
-            cb = tk.Checkbutton(row, text=file['name'], variable=file['selected_var'],
-                                bg=row_bg, fg="#FF9999", selectcolor="#333333",
-                                activebackground=row_bg, activeforeground="#FF9999",
-                                highlightthickness=0, bd=0, anchor="w", font=("Arial", 12))
-            cb.pack(side="left")
+                cb = tk.Checkbutton(self.files_scroll, text=file['name'], variable=file['selected_var'],
+                                    bg=bg, fg="#FF9999", selectcolor="#333333",
+                                    activebackground=bg, activeforeground="#FF9999",
+                                    highlightthickness=0, bd=0, anchor="w", font=("Arial", 12))
+                cb.grid(row=grid_row, column=0, sticky="ew", padx=(20, 10), pady=1)
 
-            # Show Origin Project
-            meta = tk.Label(row, text=f"[{file['origin']}]  {file['size_mb']:.1f}MB", fg="gray", bg=row_bg,
-                           anchor="e", font=("Arial", 11))
-            meta.pack(side="right", padx=(0, 10))
+                lbl = tk.Label(self.files_scroll, text=f"{file['size_mb']:.1f} MB", fg="gray", bg=bg,
+                              anchor="e", font=("Arial", 11))
+                lbl.grid(row=grid_row, column=1, sticky="e", padx=(0, 10), pady=1)
 
-        if end < len(items):
-            self.after(1, lambda: self._render_unused_batch(items, end, token, batch_size))
+        if end < len(row_plan):
+            self.after(1, lambda: self._render_unused_batch(row_plan, end, token, data_row_count, batch_size))
 
     def set_all_unused_selected(self, selected):
         query = self.unused_filter_var.get().strip().lower()
