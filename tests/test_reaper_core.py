@@ -17,6 +17,30 @@ def make_audio(path, content=b"RIFF....fake-wav-data"):
     path.write_bytes(content)
 
 
+# --- _extract_file_references (REAPER's quoting styles) ---
+
+def test_extract_file_references_double_quotes():
+    content = '<REAPER_PROJECT\n    FILE "kick.wav"\n>'
+    assert reaper_core._extract_file_references(content) == ["kick.wav"]
+
+
+def test_extract_file_references_single_quotes_for_names_with_double_quote():
+    # REAPER falls back to single quotes when the value itself contains a "
+    content = '<REAPER_PROJECT\n    FILE \'weird"name.wav\'\n>'
+    assert reaper_core._extract_file_references(content) == ['weird"name.wav']
+
+
+def test_extract_file_references_backtick_for_names_with_both_quote_types():
+    content = "<REAPER_PROJECT\n    FILE `both\"and'quotes.wav`\n>"
+    assert reaper_core._extract_file_references(content) == ["both\"and'quotes.wav"]
+
+
+def test_extract_file_references_ignores_non_line_start_occurrences():
+    # A hypothetical token ending in "FILE" must not be mistaken for the FILE key.
+    content = '<REAPER_PROJECT\n    SOMEFILE "not-a-real-ref.wav"\n    FILE "real.wav"\n>'
+    assert reaper_core._extract_file_references(content) == ["real.wav"]
+
+
 # --- find_rpp_files ---
 
 def test_find_rpp_files_finds_rpp_and_bak(tmp_path):
@@ -88,9 +112,41 @@ def test_parse_used_media_unresolved_reference_falls_back_to_name(tmp_path):
     assert "oneshot.wav" in fallback
 
 
-# --- find_unused_files ---
+def test_parse_used_media_resolves_absolute_path_case_insensitively(tmp_path):
+    audio_dir = tmp_path / "Audio Files"
+    audio_dir.mkdir()
+    kick = audio_dir / "kick.wav"
+    make_audio(kick)
 
-def test_find_unused_files_excludes_used_and_fallback(tmp_path):
+    rpp_path = tmp_path / "song.rpp"
+    # RPP stores the reference with different casing than the file on disk
+    # (common after moving a project from Windows/macOS to Linux).
+    make_rpp(rpp_path, [str(audio_dir / "KICK.WAV")])
+
+    used_paths, fallback = reaper_core.parse_used_media([str(rpp_path)])
+
+    assert os.path.normpath(str(kick)).lower() in used_paths
+    assert fallback == set()
+
+
+def test_parse_used_media_resolves_relative_path_case_insensitively(tmp_path):
+    audio_dir = tmp_path / "Audio Files"
+    audio_dir.mkdir()
+    snare = audio_dir / "snare.wav"
+    make_audio(snare)
+
+    rpp_path = tmp_path / "song.rpp"
+    make_rpp(rpp_path, ["audio files/SNARE.wav"])
+
+    used_paths, fallback = reaper_core.parse_used_media([str(rpp_path)])
+
+    assert os.path.normpath(str(snare)).lower() in used_paths
+    assert fallback == set()
+
+
+# --- find_unused_and_ambiguous_files ---
+
+def test_find_unused_and_ambiguous_files_classifies_correctly(tmp_path):
     project_dir = tmp_path / "Proj1"
     project_dir.mkdir()
 
@@ -104,26 +160,32 @@ def test_find_unused_files_excludes_used_and_fallback(tmp_path):
     make_rpp(rpp_path, [str(used), "../Outside/fallback.wav"])
 
     used_paths, fallback = reaper_core.parse_used_media([str(rpp_path)])
-    unused = reaper_core.find_unused_files([(str(rpp_path), "Proj1.rpp")], used_paths, fallback)
+    unused, ambiguous = reaper_core.find_unused_and_ambiguous_files(
+        [(str(rpp_path), "Proj1.rpp")], used_paths, fallback
+    )
 
-    unused_names = {u["name"] for u in unused}
-    assert unused_names == {"truly_unused.wav"}
+    assert {u["name"] for u in unused} == {"truly_unused.wav"}
+    assert {a["name"] for a in ambiguous} == {"fallback.wav"}
     assert unused[0]["origin"] == "Proj1.rpp"
+    assert ambiguous[0]["origin"] == "Proj1.rpp"
 
 
-def test_find_unused_files_ignores_non_audio_extensions(tmp_path):
+def test_find_unused_and_ambiguous_files_ignores_non_audio_extensions(tmp_path):
     project_dir = tmp_path / "Proj1"
     project_dir.mkdir()
     (project_dir / "readme.txt").write_text("not audio")
     rpp_path = project_dir / "Proj1.rpp"
     make_rpp(rpp_path, [])
 
-    unused = reaper_core.find_unused_files([(str(rpp_path), "Proj1.rpp")], set(), set())
+    unused, ambiguous = reaper_core.find_unused_and_ambiguous_files(
+        [(str(rpp_path), "Proj1.rpp")], set(), set()
+    )
 
     assert unused == []
+    assert ambiguous == []
 
 
-def test_find_unused_files_skips_archive_folder(tmp_path):
+def test_find_unused_and_ambiguous_files_skips_archive_folder(tmp_path):
     project_dir = tmp_path / "Proj1"
     project_dir.mkdir()
     archive = project_dir / reaper_core.ARCHIVE_FOLDER_NAME / "Proj1"
@@ -133,9 +195,12 @@ def test_find_unused_files_skips_archive_folder(tmp_path):
     rpp_path = project_dir / "Proj1.rpp"
     make_rpp(rpp_path, [])
 
-    unused = reaper_core.find_unused_files([(str(rpp_path), "Proj1.rpp")], set(), set())
+    unused, ambiguous = reaper_core.find_unused_and_ambiguous_files(
+        [(str(rpp_path), "Proj1.rpp")], set(), set()
+    )
 
     assert unused == []
+    assert ambiguous == []
 
 
 # --- archive_files / undo_last_archive ---

@@ -24,6 +24,7 @@ class App(ctk.CTk):
         self.root_folder = ""
         self.all_projects_data = []  # List of dicts
         self.unused_files_data = []  # List of dicts
+        self.ambiguous_files_data = []  # List of dicts (excluded by the safety net)
 
         # --- UI LAYOUT ---
 
@@ -63,6 +64,12 @@ class App(ctk.CTk):
         self.status_label = ctk.CTkLabel(self.action_frame, text="Ready", text_color="gray")
         self.status_label.pack(side="left", padx=20)
 
+        self.ambiguous_btn = ctk.CTkButton(self.action_frame, text="⚠ Ambiguous files: n/a",
+                                           font=("Arial", 11), fg_color="transparent",
+                                           text_color="#E5B450", hover_color="#3A3A3A",
+                                           width=220, anchor="w", command=self.show_ambiguous_files)
+        self.ambiguous_btn.pack(side="left", padx=10)
+
         self.btn_archive = ctk.CTkButton(self.action_frame, text="3. ARCHIVE SELECTED", font=("Arial", 12, "bold"), text_color="white",
                                          fg_color="#7CA37C", hover_color="#922B21",
                                          state="disabled", width=200, command=self.archive_files_logic)
@@ -92,6 +99,8 @@ class App(ctk.CTk):
         self.all_projects_data = [
             {**proj, "selected_var": ctk.IntVar(value=1)} for proj in found
         ]
+        self.ambiguous_files_data = []
+        self.ambiguous_btn.configure(text="⚠ Ambiguous files: n/a")
 
         self.render_projects()
         self.btn_search.configure(state="normal")
@@ -125,11 +134,15 @@ class App(ctk.CTk):
         checked_projects = [
             (p['path'], p['name']) for p in self.all_projects_data if p['selected_var'].get() == 1
         ]
-        unused = reaper_core.find_unused_files(checked_projects, specific_used_paths, fallback_safe_names)
+        unused, ambiguous = reaper_core.find_unused_and_ambiguous_files(
+            checked_projects, specific_used_paths, fallback_safe_names
+        )
 
         self.unused_files_data = [
             {**item, "selected_var": ctk.IntVar(value=1)} for item in unused
         ]
+        self.ambiguous_files_data = ambiguous
+        self.ambiguous_btn.configure(text=f"⚠ Ambiguous files: {len(ambiguous)}")
 
         self.render_unused()
         self.btn_archive.configure(state="normal")
@@ -150,6 +163,41 @@ class App(ctk.CTk):
             # Show Origin Project
             meta = ctk.CTkLabel(row, text=f"[{file['origin']}]  {file['size_mb']:.1f}MB", text_color="gray", width=150, anchor="e")
             meta.pack(side="right")
+
+    # --- TRANSPARENCY: SHOW FILES EXCLUDED BY THE SAFETY NET ---
+    def show_ambiguous_files(self):
+        if not self.ambiguous_files_data:
+            messagebox.showinfo(
+                "Ambiguous Files",
+                "No ambiguous files. Every audio file found is either a confirmed "
+                "reference or a confirmed unused file."
+            )
+            return
+
+        win = ctk.CTkToplevel(self)
+        win.title("Ambiguous Files - Excluded by the Safety Net")
+        win.geometry("700x450")
+
+        ctk.CTkLabel(
+            win,
+            text=(
+                "These audio files were NOT proposed for archiving because their filename\n"
+                "matches an unresolved FILE reference in a scanned project (safety net).\n"
+                "They might genuinely be in use via a path this tool could not verify\n"
+                "(e.g. a REAPER media search path), or they might truly be unused.\n"
+                "Review them manually before deleting or moving them yourself."
+            ),
+            justify="left", text_color="#E5B450",
+        ).pack(padx=15, pady=(15, 10), anchor="w")
+
+        scroll = ctk.CTkScrollableFrame(win)
+        scroll.pack(fill="both", expand=True, padx=15, pady=(0, 15))
+
+        for file in self.ambiguous_files_data:
+            row = ctk.CTkFrame(scroll, fg_color="transparent")
+            row.pack(fill="x", pady=2)
+            ctk.CTkLabel(row, text=file['name'], anchor="w").pack(side="left")
+            ctk.CTkLabel(row, text=f"[{file['origin']}]  {file['size_mb']:.1f}MB", text_color="gray", width=150, anchor="e").pack(side="right")
 
     # --- LOGIC 3: ARCHIVER ---
     def archive_files_logic(self):

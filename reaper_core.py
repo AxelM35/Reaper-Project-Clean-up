@@ -14,6 +14,66 @@ AUDIO_EXTENSIONS = ('.wav', '.aif', '.aiff', '.mp3', '.ogg', '.flac', '.mid')
 ARCHIVE_FOLDER_NAME = "_Reaper_Cleanup_Archive"
 LOG_FILE_NAME = "archive_log.json"
 
+# REAPER's chunk serializer quotes a string with double quotes by default,
+# falls back to single quotes if the value itself contains a double quote,
+# and to backticks if it contains both. A FILE token is always the first
+# thing on its line (possibly indented). Anchoring on line start (with a
+# word boundary after FILE) avoids accidentally matching the token inside
+# unrelated chunk data.
+_FILE_REF_PATTERN = re.compile(
+    r'^[ \t]*FILE\b\s*(?:"([^"]*)"|\'([^\']*)\'|`([^`]*)`)',
+    re.MULTILINE,
+)
+
+
+def _extract_file_references(content):
+    """Return the raw path strings referenced via FILE tokens in an .rpp file."""
+    refs = []
+    for match in _FILE_REF_PATTERN.finditer(content):
+        value = next((g for g in match.groups() if g is not None), '')
+        if value:
+            refs.append(value)
+    return refs
+
+
+def _resolve_on_disk(path):
+    """Resolve `path` to its real on-disk path, tolerating case differences.
+
+    REAPER projects are frequently moved between Windows/macOS (case-insensitive
+    filesystems) and Linux (case-sensitive), so a stored reference can differ
+    in case from the actual file/folder names anywhere along the path, not
+    just in the final filename. Each path segment is resolved individually.
+    Returns None if no match exists at all.
+    """
+    if os.path.exists(path):
+        return path
+
+    normalized = os.path.normpath(path)
+    drive, tail = os.path.splitdrive(normalized)
+    is_absolute = tail.startswith(os.sep)
+    parts = [p for p in tail.split(os.sep) if p]
+
+    current = drive + (os.sep if is_absolute else '')
+    if not current:
+        # Relative path with no anchor to resolve against.
+        return None
+
+    for part in parts:
+        candidate = os.path.join(current, part)
+        if os.path.exists(candidate):
+            current = candidate
+            continue
+        try:
+            entries = os.listdir(current)
+        except OSError:
+            return None
+        match = next((e for e in entries if e.lower() == part.lower()), None)
+        if match is None:
+            return None
+        current = os.path.join(current, match)
+
+    return current if os.path.exists(current) else None
+
 
 def find_rpp_files(root_folder):
     """Recursively find .rpp/.rpp-bak files under root_folder.
@@ -57,20 +117,19 @@ def parse_used_media(rpp_paths):
         except OSError:
             continue
 
-        for m in re.findall(r'FILE "(.*?)"', content):
+        for m in _extract_file_references(content):
             m_clean = m.replace('\\', '/')
             filename = m_clean.split('/')[-1].lower()
             found_absolute = False
 
             if os.path.isabs(m_clean):
-                if os.path.exists(m_clean):
-                    specific_used_paths.add(os.path.normpath(m_clean).lower())
-                    found_absolute = True
+                resolved = _resolve_on_disk(m_clean)
             else:
-                likely_path = os.path.join(project_folder, m_clean)
-                if os.path.exists(likely_path):
-                    specific_used_paths.add(os.path.normpath(likely_path).lower())
-                    found_absolute = True
+                resolved = _resolve_on_disk(os.path.join(project_folder, m_clean))
+
+            if resolved:
+                specific_used_paths.add(os.path.normpath(resolved).lower())
+                found_absolute = True
 
             if not found_absolute:
                 fallback_safe_names.add(filename)
@@ -78,16 +137,23 @@ def parse_used_media(rpp_paths):
     return specific_used_paths, fallback_safe_names
 
 
-def find_unused_files(project_entries, specific_used_paths, fallback_safe_names,
-                       audio_extensions=AUDIO_EXTENSIONS):
-    """Find audio files on disk that are not referenced by the given projects.
+def find_unused_and_ambiguous_files(project_entries, specific_used_paths, fallback_safe_names,
+                                     audio_extensions=AUDIO_EXTENSIONS):
+    """Classify audio files found in the given projects' folders.
 
     project_entries: iterable of (rpp_path, origin_name) for projects whose
       containing folder should be scanned for audio files.
 
-    Returns a deduplicated list of dicts: path, name, size_mb, origin.
+    Returns (unused, ambiguous), each a deduplicated list of dicts
+    (path, name, size_mb, origin):
+      - unused: no reference to this file was found at all (safe to archive).
+      - ambiguous: excluded from `unused` only because its filename matches an
+        unresolved FILE reference somewhere (the "safety net" heuristic) -
+        it may or may not actually be in use. Reported separately so the
+        user can review it instead of it silently vanishing from both lists.
     """
     unused = {}
+    ambiguous = {}
     for rpp_path, origin_name in project_entries:
         project_dir = os.path.dirname(rpp_path)
         for root, dirs, files in os.walk(project_dir):
@@ -100,16 +166,20 @@ def find_unused_files(project_entries, specific_used_paths, fallback_safe_names,
 
                 if norm_path in specific_used_paths:
                     continue
-                if file.lower() in fallback_safe_names:
-                    continue
 
-                unused[full_path] = {
+                entry = {
                     "path": full_path,
                     "name": file,
                     "size_mb": os.path.getsize(full_path) / (1024 * 1024),
                     "origin": origin_name,
                 }
-    return list(unused.values())
+
+                if file.lower() in fallback_safe_names:
+                    ambiguous[full_path] = entry
+                else:
+                    unused[full_path] = entry
+
+    return list(unused.values()), list(ambiguous.values())
 
 
 def _log_path(root_folder):
