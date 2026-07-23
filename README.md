@@ -2,9 +2,9 @@
 
 A small desktop utility that finds and archives audio files your REAPER projects no longer reference — so your `Audio Files` folders stop growing forever with old takes, discarded overdubs, and one-shots you tried once and forgot about.
 
-A massive THANK YOU to **GriffinSauce**, who started this as a JS tool. This is a full Python rewrite (customtkinter GUI) with a lot of v2 additions on top: safety nets, undo, configurability, and a big pass on reliability and usability.
+A massive THANK YOU to **GriffinSauce**, who started this as a JS tool. This is a full Python rewrite (customtkinter GUI) with a lot of additions on top: safety nets, undo, configurability, and a big pass on reliability and usability.
 
-> Originally shipped as a rough prototype ("do not use on real projects"). As of **v2**, it's had a proper pass on safety (nothing is ever deleted, everything is logged and undoable), correctness (regex parsing hardened, cross-platform path handling), and usability. Still: **always keep backups of anything you care about** — see [Safety](#safety) below.
+Still: **always keep backups of anything you care about** — see [Safety](#safety) below.
 
 ## What it does
 
