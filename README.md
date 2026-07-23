@@ -14,7 +14,7 @@ A simple 3-step workflow:
 2. **Find Unused** — parses the media references (`FILE "..."`) inside the checked projects, then compares them against the actual audio files sitting in each project's folder.
 3. **Archive Selected** — moves (never deletes) the files you confirm into a `_Reaper_Cleanup_Archive/<project>/` subfolder, so you can review or restore them later.
 
-## What's new in v2
+## What's nice about it
 
 - **Nothing is ever silently lost.** Every archive operation is logged (source, destination, timestamp) and can be undone from the UI — including partial recovery if a file was moved again in the meantime.
 - **Ambiguous files are surfaced, not hidden.** If a file's status can't be fully confirmed (e.g. it's referenced via a path the tool couldn't resolve), it's shown separately with an explanation instead of quietly disappearing from both lists.
@@ -48,7 +48,7 @@ Every push to `main` builds standalone Windows/Linux/macOS executables via GitHu
 1. Click **1. SCAN FOLDER** and pick the root folder containing your REAPER project(s).
 2. Click **2. FIND UNUSED**. Uncheck any project you don't want included in the comparison first if needed.
 3. Review the **UNUSED FILES** list, grouped by project. If the **⚠ Ambiguous files** banner shows up, check it too — those are files the tool wasn't fully sure about.
-4. Select what you want archived (there's a live "N selected · X MB" total) and click **3. ARCHIVE SELECTED**.
+4. Select what you want archived and click **3. ARCHIVE SELECTED**.
 5. Made a mistake? **↩ UNDO LAST ARCHIVE** restores the files from the most recent archive session.
 
 Settings (⚙) let you change the scanned audio extensions, add extra media search folders, and switch language.
@@ -62,7 +62,7 @@ Settings (⚙) let you change the scanned audio extensions, add extra media sear
 ## Development
 
 ```bash
-pip install -r requirements-dev.txt
+pip install -r requirements.txt
 python -m pytest -v
 ```
 
